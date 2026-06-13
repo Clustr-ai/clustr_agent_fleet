@@ -1,0 +1,28 @@
+# Agent-pipeline dispatcher — runs on the dispatcher VM.
+# Install:
+#   sudo cp agent-dispatcher.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now agent-dispatcher
+# Logs:  journalctl -u agent-dispatcher -f
+[Unit]
+Description=Agent-pipeline dispatcher (Linear issue -> AI Review)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run as the dispatcher user (holds the Linear/Resend secrets; spawns the worker as AGENT_RUN_USER).
+User=ubuntu
+# Run from the repo root so `dispatcher` is an importable package. Adjust to your checkout path.
+WorkingDirectory=/home/ubuntu/agent_fleet
+# Secrets + config come from an EnvironmentFile (e.g. pulled from a secret store). See example.env.
+# Required: LINEAR_API_KEY, LINEAR_TEAM_KEY, AGENT_LINEAR_USER_ID, STATUS_AI_READY,
+#           STATUS_IN_PROGRESS, STATUS_AI_REVIEW, STATUS_AI_BLOCKED; optional: RESEND_API_KEY.
+EnvironmentFile=/etc/agent/dispatcher.env
+Environment=AGENT_REPO=/home/agent/app
+Environment=AGENT_CONCURRENCY=1
+ExecStart=/usr/bin/python3 -m dispatcher.dispatcher
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

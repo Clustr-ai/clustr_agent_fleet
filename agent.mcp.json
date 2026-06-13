@@ -1,0 +1,46 @@
+{
+  "_comment": "MCP surface for headless worker runs — executed as the low-priv agent user. ONLY permission-scoped tools, no raw aws/kubectl/psql/gh. Values come from the environment with generic defaults (Claude Code expands ${VAR:-default}); supply your own via example.env at deploy time. Launched with: claude --mcp-config <this> --strict-mcp-config",
+  "mcpServers": {
+    "agent-rds": {
+      "command": "python3",
+      "args": ["${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/agent_rds_mcp.py"],
+      "env": {
+        "AWS_PROFILE": "${AWS_PROFILE:-agent}", "AWS_REGION": "${AWS_REGION:-us-east-1}",
+        "APP_REPO": "${APP_REPO:-/home/agent/app}",
+        "AGENT_DB_TARGETS": "${AGENT_DB_TARGETS:-app}",
+        "PROD_RDS_HOST_PATTERN": "${PROD_RDS_HOST_PATTERN:-{svc}.CHANGEME.us-east-1.rds.amazonaws.com}",
+        "PROD_RO_USER": "${PROD_RO_USER:-agent_ro}",
+        "PROD_RO_ENV_FILE": "${PROD_RO_ENV_FILE:-/etc/agent/prod-ro.env}"
+      }
+    },
+    "eks-staging": {
+      "command": "python3",
+      "args": ["${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/eks_staging_mcp.py"],
+      "env": {
+        "AWS_PROFILE": "${AWS_PROFILE:-agent}", "AWS_REGION": "${AWS_REGION:-us-east-1}",
+        "EKS_CLUSTER": "${EKS_CLUSTER:-my-cluster}",
+        "STAGING_NAMESPACE": "${STAGING_NAMESPACE:-staging}",
+        "STAGING_SERVICES": "${STAGING_SERVICES:-app}"
+      }
+    },
+    "github": {
+      "command": "python3",
+      "args": ["${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/github_mcp.py"],
+      "env": {
+        "GH_REPO": "${GH_REPO:-your-org/your-app}",
+        "GH_STAGING_BRANCH": "${GH_STAGING_BRANCH:-staging}",
+        "GH_APP_ID": "${GH_APP_ID:-}", "GH_APP_INSTALLATION_ID": "${GH_APP_INSTALLATION_ID:-}",
+        "GH_APP_KEY_FILE": "${GH_APP_KEY_FILE:-/etc/agent/gh-app-key.pem}"
+      }
+    },
+    "cloudwatch": {
+      "command": "uvx",
+      "args": ["--with", "botocore[crt]", "awslabs.cloudwatch-mcp-server@latest"],
+      "env": {"AWS_PROFILE": "${AWS_PROFILE:-agent}", "AWS_REGION": "${AWS_REGION:-us-east-1}", "FASTMCP_LOG_LEVEL": "ERROR"}
+    },
+    "linear-server": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
+    }
+  }
+}
