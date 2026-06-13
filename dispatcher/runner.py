@@ -64,14 +64,27 @@ def build_prompt(issue, cont=None):
 
 
 def _parse_output(out):
-    """Claude was run with --output-format json. Return (result_text, session_id)."""
-    try:
-        data = json.loads(out)
-        if isinstance(data, dict):
-            return data.get("result") or "", data.get("session_id")
-    except Exception:
-        pass
-    return out, None  # fall back to treating stdout as plain text
+    """Extract (result_text, session_id) from `--output-format json` output, robustly.
+
+    A login shell can prepend noise to stdout, so we don't assume the whole stream is the JSON —
+    we locate the result object (it starts with `{"type":`) and parse from there.
+    """
+    s = (out or "").strip()
+    candidates = [s]
+    i = s.rfind('{"type":')
+    if i >= 0:
+        candidates.append(s[i:])
+    i = s.find("{")
+    if i >= 0:
+        candidates.append(s[i:])
+    for cand in candidates:
+        try:
+            d = json.loads(cand)
+            if isinstance(d, dict) and ("result" in d or "session_id" in d):
+                return d.get("result") or "", d.get("session_id")
+        except Exception:
+            continue
+    return out, None  # not JSON — treat as plain text
 
 
 def _worktree_state(wt, branch):
@@ -104,6 +117,9 @@ def run_worker(issue, branch, cont=None):
     resume = ""
     if cont and cont.get("session_id") and config.USE_RESUME:
         resume = f"--resume {shlex.quote(cont['session_id'])} "
+    # JSON output only when we need the session id for --resume; otherwise plain text (robust RESULT
+    # parsing, no login-shell-noise fragility). USE_RESUME defaults off.
+    outfmt = "--output-format json " if config.USE_RESUME else ""
 
     lockfile = os.path.join(config.RUN_HOME, ".agent-git.lock")
     script = f"""set -e
@@ -129,8 +145,7 @@ python3 {shlex.quote(render)} {shlex.quote(config.MCP_CONFIG)} > "$__MCP"
   --mcp-config "$__MCP" \
   --strict-mcp-config \
   --permission-mode bypassPermissions \
-  --output-format json \
-  --add-dir {shlex.quote(wt)}
+  {outfmt}--add-dir {shlex.quote(wt)}
 rm -f "$__MCP"
 """
     try:
@@ -148,7 +163,7 @@ rm -f "$__MCP"
         except OSError:
             pass
 
-    text, session_id = _parse_output(out)
+    text, session_id = _parse_output(out) if config.USE_RESUME else (out, None)
 
     m = None
     for m in _RESULT_RE.finditer(text):
