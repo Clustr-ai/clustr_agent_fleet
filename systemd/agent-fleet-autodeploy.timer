@@ -1,0 +1,11 @@
+# Fires the auto-deploy check every 2 minutes (and shortly after boot).
+[Unit]
+Description=Periodic agent-fleet auto-deploy check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

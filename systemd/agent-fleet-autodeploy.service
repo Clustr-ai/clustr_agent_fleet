@@ -1,0 +1,14 @@
+# Auto-deploy oneshot: pull the fleet repo + restart the dispatcher when main advances (if idle).
+# Install alongside the .timer:
+#   sudo cp bin/autodeploy.sh /usr/local/bin/agent-fleet-autodeploy.sh && sudo chmod +x $_
+#   sudo cp systemd/agent-fleet-autodeploy.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now agent-fleet-autodeploy.timer
+[Unit]
+Description=Agent-fleet auto-deploy (pull + restart dispatcher on main update, when idle)
+
+[Service]
+Type=oneshot
+User=ubuntu
+# Reuse the dispatcher config so AGENT_RUN_USER (and any path overrides) carry over.
+EnvironmentFile=-/etc/clustr-agent/dispatcher.env
+ExecStart=/usr/local/bin/agent-fleet-autodeploy.sh
