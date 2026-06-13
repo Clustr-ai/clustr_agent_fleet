@@ -24,7 +24,7 @@ _RESULT_RE = re.compile(r"^RESULT:\s*(\{.*\})\s*$", re.MULTILINE)
 def _as_run_user(script, timeout=None):
     """Run a bash script as RUN_USER via sudo. Returns CompletedProcess."""
     return subprocess.run(
-        ["sudo", "-u", config.RUN_USER, "-H", "bash", "-lc", script],
+        ["sudo", "-iu", config.RUN_USER, "bash", "-c", script],
         capture_output=True, text=True, timeout=timeout,
     )
 
