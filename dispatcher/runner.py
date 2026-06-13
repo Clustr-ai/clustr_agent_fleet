@@ -85,12 +85,15 @@ else
   git worktree add -b {shlex.quote(branch)} {shlex.quote(wt)} origin/main 2>/dev/null || true
 fi
 cd {shlex.quote(wt)}
+__MCP="$(mktemp)"
+python3 {shlex.quote(os.path.join(config.FLEET_REPO, "bin", "render-mcp-config.py"))} {shlex.quote(config.MCP_CONFIG)} > "$__MCP"
 {shlex.quote(config.CLAUDE_BIN)} -p "$(cat {shlex.quote(promptfile)})" \
   --model {shlex.quote(config.CLAUDE_MODEL)} \
-  --mcp-config {shlex.quote(config.MCP_CONFIG)} \
+  --mcp-config "$__MCP" \
   --strict-mcp-config \
   --permission-mode bypassPermissions \
   --add-dir {shlex.quote(wt)}
+rm -f "$__MCP"
 """
     try:
         p = _as_run_user(script, timeout=config.WORKER_TIMEOUT_SEC)
