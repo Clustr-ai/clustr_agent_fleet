@@ -22,11 +22,28 @@ _RESULT_RE = re.compile(r"^RESULT:\s*(\{.*\})\s*$", re.MULTILINE)
 
 
 def _as_run_user(script, timeout=None):
-    """Run a bash script as RUN_USER via sudo. Returns CompletedProcess."""
-    return subprocess.run(
-        ["sudo", "-iu", config.RUN_USER, "bash", "-c", script],
-        capture_output=True, text=True, timeout=timeout,
-    )
+    """Run a bash script as RUN_USER in a clean LOGIN environment.
+
+    The script is written to a temp file and invoked as `sudo -iu <user> bash <file>` rather than
+    passed inline: `-iu` (login) is required so the Claude binary can spawn child processes (MCP
+    servers, ripgrep) — under `-u -H` it fails with EACCES — and so the user's profile (where the
+    worker's MCP env lives) is sourced. Passing the multi-line script as a FILE (not `bash -c '...'`)
+    avoids the login shell re-quoting newlines and silently dropping all but the first statement.
+    """
+    fd, sf = tempfile.mkstemp(prefix="agent-run-", suffix=".sh")
+    with os.fdopen(fd, "w") as f:
+        f.write(script)
+    os.chmod(sf, 0o644)  # readable by RUN_USER
+    try:
+        return subprocess.run(
+            ["sudo", "-iu", config.RUN_USER, "bash", sf],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    finally:
+        try:
+            os.unlink(sf)
+        except OSError:
+            pass
 
 
 def _fallback_branch(issue):
