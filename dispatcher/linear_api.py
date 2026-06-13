@@ -58,6 +58,24 @@ def comment(issue_id, body):
     return _gql(q, {"input": {"issueId": issue_id, "body": body}})["commentCreate"]["success"]
 
 
+def comments(issue_id):
+    """Return the issue's comments oldest→newest: [{body, user_id}]."""
+    q = "query($id:String!){ issue(id:$id){ comments{ nodes{ body createdAt user{ id } } } } }"
+    nodes = _gql(q, {"id": issue_id})["issue"]["comments"]["nodes"]
+    return [{"body": n["body"], "user_id": (n.get("user") or {}).get("id")} for n in nodes]
+
+
+def human_reply_since(issue_id, agent_user_id, since_count):
+    """If a non-agent comment was added beyond `since_count`, return its body (the human's answer)."""
+    cs = comments(issue_id)
+    if len(cs) <= since_count:
+        return None
+    for c in cs[since_count:]:
+        if c["user_id"] and c["user_id"] != agent_user_id:
+            return c["body"]
+    return None
+
+
 def try_claim(issue_id):
     """CAS-ish claim: re-fetch; only transition if still AI Ready and unassigned. Returns the issue
     dict on success, else None (someone else grabbed it)."""

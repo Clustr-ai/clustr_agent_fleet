@@ -35,6 +35,14 @@ POLL_INTERVAL_SEC = int(os.environ.get("AGENT_POLL_INTERVAL_SEC", "60"))
 CONCURRENCY = int(os.environ.get("AGENT_CONCURRENCY", "1"))  # start at 1; raise once trusted
 LEASE_MINUTES = int(os.environ.get("AGENT_LEASE_MINUTES", "30"))  # In Progress idle > this → swept
 
+# Long-running tasks / continuation (docs/long-running-tasks.md)
+MAX_CONTINUATIONS = int(os.environ.get("AGENT_MAX_CONTINUATIONS", "6"))  # bound the auto-continue loop
+USE_RESUME = os.environ.get("AGENT_USE_RESUME", "0") == "1"  # claude --resume fast path (else rehydrate)
+EXTERNAL_RECHECK_SEC = int(os.environ.get("AGENT_EXTERNAL_RECHECK_SEC", "300"))  # waiting_external poll
+# Status for paused-on-external / needs-human waits (the sweeper ignores it). If you haven't created a
+# dedicated "AI Awaiting Input" workflow state, it falls back to AI Blocked (set after STATUS_AI_BLOCKED).
+STATUS_AI_AWAITING_INPUT = os.environ.get("STATUS_AI_AWAITING_INPUT", "")
+
 # Worker run (paths are in RUN_USER's home — its own agent-fleet checkout)
 FLEET_REPO = os.environ.get("AGENT_FLEET_REPO", os.path.join(RUN_HOME, "agent_fleet"))
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", os.path.join(RUN_HOME, ".npm-global/bin/claude"))
@@ -50,6 +58,10 @@ KEEP_WORKTREES = os.environ.get("AGENT_KEEP_WORKTREES", "1") == "1"
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 NOTIFY_EMAIL = os.environ.get("AGENT_NOTIFY_EMAIL", "")  # who gets terminal-state emails
 NOTIFY_FROM = os.environ.get("AGENT_NOTIFY_FROM", "Agent <agent@example.com>")  # verified Resend domain
+
+
+# Awaiting-input falls back to AI Blocked if no dedicated status was provided.
+STATUS_AI_AWAITING_INPUT = STATUS_AI_AWAITING_INPUT or STATUS_AI_BLOCKED
 
 
 def require(*names):

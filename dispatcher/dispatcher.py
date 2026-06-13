@@ -1,13 +1,9 @@
-"""Agent-pipeline dispatcher — the single long-running loop (DESIGN.md §2).
+"""Agent-fleet dispatcher — the single long-running loop.
 
-Each tick:
-  1. Sweep: In-Progress issues assigned to the agent, idle past the lease → AI Blocked (recoverable).
-  2. Claim: up to (CONCURRENCY - active) issues in `AI Ready` → In Progress + assign + comment.
-  3. Work: one headless worker per claimed issue, in its own worktree, in a thread.
-  4. Land: parse the worker's RESULT → move status to AI Review (success) or AI Blocked → email.
-
-Linear status is the durable queue, so a crash loses nothing: the issue stays where it was and the
-sweeper or the next claim picks it up. Run via systemd (see systemd/agent-dispatcher.service).
+Each tick: sweep stale In-Progress, resume awaiting-input issues, then claim new AI Ready issues.
+Per issue a worker runs; on `paused` the dispatcher auto-continues (bounded by MAX_CONTINUATIONS),
+parks external/human waits in AI Awaiting Input, and handles `decomposed` epics. The issue status is
+the durable queue. See DESIGN.md and docs/long-running-tasks.md.
 """
 import datetime as dt
 import threading
@@ -17,53 +13,128 @@ from . import config, linear_api, notify, runner
 
 
 def log(*a):
-    print(dt.datetime.utcnow().isoformat(), *a, flush=True)
+    print(dt.datetime.now(dt.timezone.utc).isoformat(), *a, flush=True)
 
 
-_active = {}  # issue_id -> thread
+_active = {}     # issue_id -> thread (running, including across more_runtime continuations)
+_cont = {}       # issue_id -> {"continuations":int, "session_id":str|None, "human_reply":str|None}
+_awaiting = {}   # issue_id -> {"reason","branch","issue","recheck_at","comment_count"}
 _lock = threading.Lock()
 
 
 def _claim_comment(run_id):
-    return (f"🤖 Claimed by the agent pipeline — run `{run_id}`. "
-            f"Working in an isolated worktree off latest `main`. "
-            f"Status will move to **AI Review** on success or **AI Blocked** if I get stuck.")
+    return (f"🤖 Claimed by the agent fleet — run `{run_id}`. Working in an isolated worktree off latest "
+            f"`main`. I'll move this to **AI Review** on success, **AI Blocked** if stuck, or pause for "
+            f"input if I need it.")
+
+
+def _finish_success(issue, result):
+    linear_api.update_state(issue["id"], config.STATUS_AI_REVIEW)
+    notify.review_ready(issue, result)
+    log(issue["identifier"], "→ AI Review:", result.get("summary", ""))
+
+
+def _finish_blocked(issue, result):
+    linear_api.update_state(issue["id"], config.STATUS_AI_BLOCKED)
+    linear_api.comment(issue["id"],
+                       f"⛔ **Blocked.** {result.get('blocked_reason', '')}\n\n{result.get('summary', '')}")
+    notify.blocked(issue, result)
+    log(issue["identifier"], "→ AI Blocked:", result.get("blocked_reason", ""))
+
+
+def _handle_decomposed(issue, result):
+    subs = result.get("subtasks") or []
+    linear_api.comment(issue["id"],
+                       "🧩 **Decomposed into sub-tickets.** The foundational piece is in the PR; the rest "
+                       "are tracked as: " + (", ".join(subs) if subs else "(see comments)") +
+                       f"\n\n{result.get('summary', '')}")
+    linear_api.update_state(issue["id"], config.STATUS_AI_REVIEW)
+    notify.review_ready(issue, result)
+    log(issue["identifier"], "→ AI Review (decomposed):", subs)
+
+
+def _park_awaiting(issue, branch, result):
+    reason = result.get("pause_reason", "waiting_external")
+    linear_api.update_state(issue["id"], config.STATUS_AI_AWAITING_INPUT)
+    comment_count = 0
+    recheck = None
+    if reason == "needs_human":
+        q = result.get("question") or "I need a decision to proceed."
+        linear_api.comment(issue["id"], f"⏸️ **Awaiting your input.** {q}\n\n_Reply here and I'll continue._")
+        try:
+            comment_count = len(linear_api.comments(issue["id"]))
+        except Exception:
+            comment_count = 0
+    else:  # waiting_external
+        recheck = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=config.EXTERNAL_RECHECK_SEC)
+        linear_api.comment(issue["id"],
+                           f"⏸️ Waiting on `{result.get('wait_for', 'external')}` — I'll re-check shortly.")
+    _awaiting[issue["id"]] = {"reason": reason, "branch": branch, "issue": issue,
+                              "recheck_at": recheck, "comment_count": comment_count}
+    log(issue["identifier"], "→ Awaiting Input:", reason)
 
 
 def work_issue(issue):
     ident = issue["identifier"]
-    branch = None
+    branch = issue.get("branchName") or runner._fallback_branch(issue)
+    issue["branchName"] = branch
     try:
-        branch = issue.get("branchName") or runner._fallback_branch(issue)
-        issue["branchName"] = branch
-        log(ident, "→ running worker as", config.RUN_USER, "branch", branch)
-        result = runner.run_worker(issue, branch)
-        status = result.get("status", "blocked")
-        if status == "success":
-            linear_api.update_state(issue["id"], config.STATUS_AI_REVIEW)
-            notify.review_ready(issue, result)
-            log(ident, "→ AI Review:", result.get("summary", ""))
-        else:
-            linear_api.update_state(issue["id"], config.STATUS_AI_BLOCKED)
-            linear_api.comment(issue["id"],
-                               f"⛔ **Blocked.** {result.get('blocked_reason', '')}\n\n{result.get('summary', '')}")
-            notify.blocked(issue, result)
-            log(ident, "→ AI Blocked:", result.get("blocked_reason", ""))
-    except Exception as e:  # never let one issue kill the loop
+        while True:
+            cont = _cont.get(issue["id"], {"continuations": 0, "session_id": None})
+            tag = f"(cont {cont['continuations']})" if cont["continuations"] else ""
+            log(ident, "→ running worker", tag, "branch", branch)
+            result = runner.run_worker(issue, branch, cont)
+            status = result.get("status", "blocked")
+
+            if status == "success":
+                _finish_success(issue, result)
+                break
+            if status == "decomposed":
+                _handle_decomposed(issue, result)
+                break
+            if status == "paused":
+                cont["continuations"] += 1
+                cont["session_id"] = result.get("session_id") or cont.get("session_id")
+                cont.pop("human_reply", None)
+                _cont[issue["id"]] = cont
+                if cont["continuations"] > config.MAX_CONTINUATIONS:
+                    _finish_blocked(issue, {
+                        "blocked_reason": f"continuation budget ({config.MAX_CONTINUATIONS}) exhausted — "
+                                          "needs decomposition or human help",
+                        "summary": result.get("summary", "")})
+                    break
+                if result.get("pause_reason", "more_runtime") == "more_runtime":
+                    log(ident, "paused → auto-continuing", cont["continuations"])
+                    continue  # same thread, same concurrency slot
+                _park_awaiting(issue, branch, result)
+                break  # external/human wait → resumed by process_awaiting()
+            # default: blocked
+            _finish_blocked(issue, result)
+            break
+    except Exception as e:
         log(ident, "ERROR", repr(e))
         try:
-            linear_api.update_state(issue["id"], config.STATUS_AI_BLOCKED)
-            linear_api.comment(issue["id"], f"⛔ Dispatcher error: `{e!r}`")
+            _finish_blocked(issue, {"blocked_reason": f"dispatcher error: {e!r}", "summary": ""})
         except Exception:
             pass
     finally:
-        if branch and not config.KEEP_WORKTREES:
-            try:
-                runner.remove_worktree(branch)
-            except Exception:
-                pass
+        # keep continuation state + worktree while parked in awaiting; clear on terminal outcomes
+        if issue["id"] not in _awaiting:
+            _cont.pop(issue["id"], None)
+            if not config.KEEP_WORKTREES:
+                try:
+                    runner.remove_worktree(branch)
+                except Exception:
+                    pass
         with _lock:
             _active.pop(issue["id"], None)
+
+
+def _spawn(issue):
+    t = threading.Thread(target=work_issue, args=(issue,), daemon=True)
+    with _lock:
+        _active[issue["id"]] = t
+    t.start()
 
 
 def sweep():
@@ -74,7 +145,7 @@ def sweep():
             continue
         with _lock:
             if iss["id"] in _active:
-                continue  # we're actively working it
+                continue
         try:
             updated = dt.datetime.fromisoformat(iss["updatedAt"].replace("Z", "+00:00"))
         except Exception:
@@ -84,16 +155,42 @@ def sweep():
             linear_api.update_state(iss["id"], config.STATUS_AI_BLOCKED)
             linear_api.comment(iss["id"],
                                f"⛔ Lease expired (idle > {config.LEASE_MINUTES}m). Re-queue to **AI Ready** to retry.")
+            _cont.pop(iss["id"], None)
+
+
+def process_awaiting():
+    """Resume issues parked on an external wait (recheck timer) or a human reply (new comment)."""
+    now = dt.datetime.now(dt.timezone.utc)
+    for iid, info in list(_awaiting.items()):
+        with _lock:
+            if iid in _active or len(_active) >= config.CONCURRENCY:
+                continue
+        ready = False
+        if info["reason"] == "waiting_external":
+            ready = bool(info["recheck_at"]) and now >= info["recheck_at"]
+        elif info["reason"] == "needs_human":
+            try:
+                reply = linear_api.human_reply_since(iid, config.AGENT_USER_ID, info["comment_count"])
+            except Exception:
+                reply = None
+            if reply:
+                _cont.setdefault(iid, {"continuations": 1, "session_id": None})["human_reply"] = reply
+                ready = True
+        if ready:
+            _awaiting.pop(iid, None)
+            iss = info["issue"]
+            linear_api.update_state(iss["id"], config.STATUS_IN_PROGRESS)
+            log(iss["identifier"], "resuming from awaiting:", info["reason"])
+            _spawn(iss)
 
 
 def tick():
     sweep()
+    process_awaiting()
     with _lock:
-        free = config.CONCURRENCY - len(_active)
-    if free <= 0:
-        return
-    ready = linear_api.list_by_status(config.STATUS_AI_READY)
-    for iss in ready:
+        if config.CONCURRENCY - len(_active) <= 0:
+            return
+    for iss in linear_api.list_by_status(config.STATUS_AI_READY):
         with _lock:
             if len(_active) >= config.CONCURRENCY:
                 break
@@ -101,21 +198,18 @@ def tick():
                 continue
         claimed = linear_api.try_claim(iss["id"])
         if not claimed:
-            continue  # someone else grabbed it / no longer ready
+            continue
         run_id = f"{iss['identifier']}-{int(time.time())}"
         linear_api.comment(iss["id"], _claim_comment(run_id))
-        t = threading.Thread(target=work_issue, args=(claimed,), daemon=True)
-        with _lock:
-            _active[iss["id"]] = t
         log(iss["identifier"], "claimed", run_id)
-        t.start()
+        _spawn(claimed)
 
 
 def main():
     config.require("LINEAR_API_KEY", "TEAM_KEY", "AGENT_USER_ID",
                    "STATUS_AI_READY", "STATUS_IN_PROGRESS", "STATUS_AI_REVIEW", "STATUS_AI_BLOCKED")
     log("dispatcher up — team", config.TEAM_KEY, "concurrency", config.CONCURRENCY,
-        "poll", config.POLL_INTERVAL_SEC, "lease", config.LEASE_MINUTES, "m")
+        "poll", config.POLL_INTERVAL_SEC, "lease", config.LEASE_MINUTES, "m max-cont", config.MAX_CONTINUATIONS)
     while True:
         try:
             tick()

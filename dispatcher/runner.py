@@ -1,13 +1,14 @@
 """Per-issue worker runner.
 
-The worker runs as the low-privilege RUN_USER — NOT as the dispatcher's user. The dispatcher (holds
-the Linear/Resend secrets) shells out via `sudo -u <RUN_USER>`, which:
-  1. creates an isolated worktree off latest main in RUN_USER's OWN app clone, and
-  2. runs the headless Claude worker in it (bypass-permissions — safety is the credential boundary:
-     no SSH key, App-token git that can't push main, assume-only AWS, SELECT-only prod — DESIGN.md §3).
+The worker runs as the low-privilege RUN_USER in a clean login (`sudo -iu`), in its OWN app clone, in
+an isolated worktree. Safety is the credential boundary (no SSH key, App-token git that can't push
+main, assume-only AWS, SELECT-only prod — DESIGN.md). This module:
+  - builds the worker prompt (with continuation context when resuming),
+  - renders the MCP config in the worker's env, creates/reuses the worktree (lock-serialized),
+  - runs headless Claude with JSON output (so we capture the session id), and
+  - parses the RESULT line — with a guarantee path when the worker ends without one.
 
-So even a misbehaving worker cannot reach main/prod or read the dispatcher's secrets. The RESULT line
-is parsed from the worker's stdout.
+See docs/long-running-tasks.md for the pause/checkpoint/continue design.
 """
 import json
 import os
@@ -22,23 +23,14 @@ _RESULT_RE = re.compile(r"^RESULT:\s*(\{.*\})\s*$", re.MULTILINE)
 
 
 def _as_run_user(script, timeout=None):
-    """Run a bash script as RUN_USER in a clean LOGIN environment.
-
-    The script is written to a temp file and invoked as `sudo -iu <user> bash <file>` rather than
-    passed inline: `-iu` (login) is required so the Claude binary can spawn child processes (MCP
-    servers, ripgrep) — under `-u -H` it fails with EACCES — and so the user's profile (where the
-    worker's MCP env lives) is sourced. Passing the multi-line script as a FILE (not `bash -c '...'`)
-    avoids the login shell re-quoting newlines and silently dropping all but the first statement.
-    """
+    """Run a bash script as RUN_USER in a clean LOGIN env (sources the worker's MCP profile)."""
     fd, sf = tempfile.mkstemp(prefix="agent-run-", suffix=".sh")
     with os.fdopen(fd, "w") as f:
         f.write(script)
-    os.chmod(sf, 0o644)  # readable by RUN_USER
+    os.chmod(sf, 0o644)
     try:
-        return subprocess.run(
-            ["sudo", "-iu", config.RUN_USER, "bash", sf],
-            capture_output=True, text=True, timeout=timeout,
-        )
+        return subprocess.run(["sudo", "-iu", config.RUN_USER, "bash", sf],
+                              capture_output=True, text=True, timeout=timeout)
     finally:
         try:
             os.unlink(sf)
@@ -51,32 +43,68 @@ def _fallback_branch(issue):
     return f"agent/{issue['identifier'].lower()}-{slug}"
 
 
-def build_prompt(issue):
+def build_prompt(issue, cont=None):
     tmpl = open(config.WORKER_PROMPT).read()
+    contblock = ""
+    if cont and cont.get("continuations", 0) > 0:
+        contblock = (
+            f"\n## ⏩ CONTINUATION (run #{cont['continuations'] + 1})\n"
+            f"You are RESUMING this ticket — your prior work is already in this worktree. FIRST read "
+            f"`.agent/{issue['identifier']}.md` (your journal) and run `git diff origin/main` to see "
+            f"what's done, then continue from the NEXT unchecked step. Do NOT restart from scratch or "
+            f"re-post the preliminary review."
+        )
+        if cont.get("human_reply"):
+            contblock += "\nA human answered your question:\n> " + " ".join(cont["human_reply"].split())
     return (tmpl
             .replace("{{TICKET}}", issue["identifier"])
             .replace("{{TITLE}}", issue.get("title", ""))
-            .replace("{{BRANCH}}", issue.get("branchName") or _fallback_branch(issue)))
+            .replace("{{BRANCH}}", issue.get("branchName") or _fallback_branch(issue))
+            .replace("{{CONTINUATION}}", contblock))
 
 
-def run_worker(issue, branch):
-    """As RUN_USER: make a worktree off origin/main, run the worker in it, return the parsed RESULT.
+def _parse_output(out):
+    """Claude was run with --output-format json. Return (result_text, session_id)."""
+    try:
+        data = json.loads(out)
+        if isinstance(data, dict):
+            return data.get("result") or "", data.get("session_id")
+    except Exception:
+        pass
+    return out, None  # fall back to treating stdout as plain text
 
-    The whole thing runs in one sudo invocation so the worktree is owned by RUN_USER throughout.
-    """
-    prompt = build_prompt(issue)
+
+def _worktree_state(wt, branch):
+    """Cheap recovery probe: how much uncommitted work + is the branch pushed."""
+    r = _as_run_user(
+        f"cd {shlex.quote(wt)} 2>/dev/null && "
+        f"echo CHANGED=$(git status --porcelain 2>/dev/null | wc -l) && "
+        f"echo PUSHED=$(git ls-remote origin {shlex.quote(branch)} 2>/dev/null | wc -l)", timeout=60)
+    changed = pushed = "?"
+    for line in (r.stdout or "").splitlines():
+        if line.startswith("CHANGED="):
+            changed = line.split("=", 1)[1]
+        elif line.startswith("PUSHED="):
+            pushed = line.split("=", 1)[1]
+    return changed, pushed
+
+
+def run_worker(issue, branch, cont=None):
+    """Run (or continue) the worker for one issue. Returns the parsed RESULT dict."""
+    prompt = build_prompt(issue, cont)
     safe = branch.replace("/", "-")
     wt = os.path.join(config.WORKTREE_BASE, safe)
+    render = os.path.join(config.FLEET_REPO, "bin", "render-mcp-config.py")
 
-    # The prompt (methodology + issue title — not secret) goes via a temp file readable by RUN_USER,
-    # so we avoid quoting a large multi-line string through the shell.
     fd, promptfile = tempfile.mkstemp(prefix="agent-prompt-", suffix=".txt")
     with os.fdopen(fd, "w") as f:
         f.write(prompt)
     os.chmod(promptfile, 0o644)
 
-    # Parallel workers share ONE app clone, so serialize the quick git step (fetch + worktree add)
-    # with a lock to avoid ref-lock races; the long claude run below still proceeds fully in parallel.
+    resume = ""
+    if cont and cont.get("session_id") and config.USE_RESUME:
+        resume = f"--resume {shlex.quote(cont['session_id'])} "
+
     lockfile = os.path.join(config.RUN_HOME, ".agent-git.lock")
     script = f"""set -e
 mkdir -p {shlex.quote(config.WORKTREE_BASE)}
@@ -91,41 +119,59 @@ mkdir -p {shlex.quote(config.WORKTREE_BASE)}
   fi
 ) 9>{shlex.quote(lockfile)}
 cd {shlex.quote(wt)}
+EXCL="$(git rev-parse --git-path info/exclude)"
+grep -qxF '.agent/' "$EXCL" 2>/dev/null || echo '.agent/' >> "$EXCL"
+mkdir -p .agent
 __MCP="$(mktemp)"
-python3 {shlex.quote(os.path.join(config.FLEET_REPO, "bin", "render-mcp-config.py"))} {shlex.quote(config.MCP_CONFIG)} > "$__MCP"
-{shlex.quote(config.CLAUDE_BIN)} -p "$(cat {shlex.quote(promptfile)})" \
+python3 {shlex.quote(render)} {shlex.quote(config.MCP_CONFIG)} > "$__MCP"
+{shlex.quote(config.CLAUDE_BIN)} -p "$(cat {shlex.quote(promptfile)})" {resume}\
   --model {shlex.quote(config.CLAUDE_MODEL)} \
   --mcp-config "$__MCP" \
   --strict-mcp-config \
   --permission-mode bypassPermissions \
+  --output-format json \
   --add-dir {shlex.quote(wt)}
 rm -f "$__MCP"
 """
     try:
         p = _as_run_user(script, timeout=config.WORKER_TIMEOUT_SEC)
-        out = (p.stdout or "") + ("\n" + p.stderr if p.returncode != 0 and p.stderr else "")
+        out = p.stdout or ""
     except subprocess.TimeoutExpired:
-        return {"ticket": issue["identifier"], "status": "blocked",
-                "blocked_reason": f"worker timed out after {config.WORKER_TIMEOUT_SEC}s",
-                "summary": "timeout", "branch": branch}
+        changed, pushed = _worktree_state(wt, branch)
+        return {"ticket": issue["identifier"], "status": "blocked", "branch": branch,
+                "blocked_reason": f"worker timed out after {config.WORKER_TIMEOUT_SEC}s "
+                                  f"(left {changed} uncommitted changes, pushed={pushed})",
+                "summary": "timeout"}
     finally:
         try:
             os.unlink(promptfile)
         except OSError:
             pass
 
+    text, session_id = _parse_output(out)
+
     m = None
-    for m in _RESULT_RE.finditer(out):
+    for m in _RESULT_RE.finditer(text):
         pass  # take the LAST RESULT line
     if not m:
-        return {"ticket": issue["identifier"], "status": "blocked",
-                "blocked_reason": "worker produced no RESULT line",
-                "summary": (out[-400:] if out else "no output"), "branch": branch}
+        # RESULT guarantee: the worker ended without a result. Report the worktree state instead of a
+        # bare error so partial work is visible (docs/long-running-tasks.md — "RESULT guarantee").
+        changed, pushed = _worktree_state(wt, branch)
+        tail = (text or out)[-300:]
+        return {"ticket": issue["identifier"], "status": "blocked", "branch": branch,
+                "session_id": session_id,
+                "blocked_reason": f"worker ended without a RESULT line "
+                                  f"(left {changed} uncommitted changes, branch pushed={pushed})",
+                "summary": tail}
     try:
-        return json.loads(m.group(1))
+        res = json.loads(m.group(1))
     except json.JSONDecodeError as e:
-        return {"ticket": issue["identifier"], "status": "blocked",
-                "blocked_reason": f"unparseable RESULT: {e}", "summary": m.group(1)[:400], "branch": branch}
+        return {"ticket": issue["identifier"], "status": "blocked", "branch": branch,
+                "session_id": session_id,
+                "blocked_reason": f"unparseable RESULT: {e}", "summary": m.group(1)[:300]}
+    res.setdefault("branch", branch)
+    res["session_id"] = session_id or res.get("session_id")
+    return res
 
 
 def remove_worktree(branch):

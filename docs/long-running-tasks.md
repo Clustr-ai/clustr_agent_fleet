@@ -1,6 +1,9 @@
 # Long-running tasks: pause, checkpoint, continue
 
-Status: **PROPOSED** (design, not yet built). Companion to [DESIGN.md](../DESIGN.md).
+Status: **IMPLEMENTED** (Phases 0–4). Companion to [DESIGN.md](../DESIGN.md). The `paused`/`decomposed`
+RESULT outcomes, the journal handoff, the bounded auto-continue loop, the `AI Awaiting Input` parking
+for external/human waits, and the RESULT-guarantee recovery all live in `worker-prompt.md` +
+`dispatcher/`. Session-resume (`--resume`) is wired behind `AGENT_USE_RESUME` (default off → rehydrate).
 
 ## Problem
 
