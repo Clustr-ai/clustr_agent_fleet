@@ -75,15 +75,21 @@ def run_worker(issue, branch):
         f.write(prompt)
     os.chmod(promptfile, 0o644)
 
+    # Parallel workers share ONE app clone, so serialize the quick git step (fetch + worktree add)
+    # with a lock to avoid ref-lock races; the long claude run below still proceeds fully in parallel.
+    lockfile = os.path.join(config.RUN_HOME, ".agent-git.lock")
     script = f"""set -e
-cd {shlex.quote(config.REPO)}
-git fetch -q origin main
 mkdir -p {shlex.quote(config.WORKTREE_BASE)}
-if git rev-parse --verify {shlex.quote(branch)} >/dev/null 2>&1; then
-  git worktree add {shlex.quote(wt)} {shlex.quote(branch)} 2>/dev/null || true
-else
-  git worktree add -b {shlex.quote(branch)} {shlex.quote(wt)} origin/main 2>/dev/null || true
-fi
+(
+  flock 9
+  cd {shlex.quote(config.REPO)}
+  git fetch -q origin main
+  if git rev-parse --verify {shlex.quote(branch)} >/dev/null 2>&1; then
+    git worktree add {shlex.quote(wt)} {shlex.quote(branch)} 2>/dev/null || true
+  else
+    git worktree add -b {shlex.quote(branch)} {shlex.quote(wt)} origin/main 2>/dev/null || true
+  fi
+) 9>{shlex.quote(lockfile)}
 cd {shlex.quote(wt)}
 __MCP="$(mktemp)"
 python3 {shlex.quote(os.path.join(config.FLEET_REPO, "bin", "render-mcp-config.py"))} {shlex.quote(config.MCP_CONFIG)} > "$__MCP"
