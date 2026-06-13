@@ -129,8 +129,45 @@ thumb:
 - fits in a few chained runs → `paused` / auto-continue;
 - genuinely an epic → decompose into sub-tickets.
 
+## Field lessons → hard rules (from a real stall)
+
+A real run (a multi-service Go change) edited 5 files, ran a **local `go build` on the worker VM**,
+then announced *"set up watchers for the build result, waiting for it to complete before commit/PR"* —
+and **ended its turn to wait**. A headless run has no "check back later," so the process returned with
+**no `RESULT` line** and the dispatcher marked it blocked, stranding the (uncommitted, unpushed) work.
+Lessons, now non-negotiable:
+
+1. **Never end a turn to "wait" for anything.** Ending the turn ends the run. If you can't finish, emit
+   `paused`; if you're done, emit `success`/`blocked`. Silence is never an option.
+2. **A `RESULT` line is mandatory and is always the last thing emitted** — on every path, including
+   errors and "I think I'm waiting." The worker prompt states this as the single inviolable rule, and
+   the dispatcher treats *no RESULT* as a worker bug, not a normal outcome (see "RESULT guarantee").
+3. **Local builds and tests are SYNCHRONOUS — run them in the foreground, read the result, proceed.**
+   `go build` / `go test` / `npm run build` finish *within* the run. Never background them, never "watch"
+   them, never treat them as external. They are the verification, done inline.
+4. **`waiting_external` is ONLY for genuinely out-of-band waits you cannot block on** — CI on a *pushed*
+   PR, or a staging *deploy* (GitHub Actions). Even then the rule is: **commit + push + open the PR
+   first**, then either pause with `waiting_external` (Phase 3) or just open the PR and note "CI/staging
+   verification pending." Never hold work hostage to an external build — push it so it's never stranded.
+5. **Build where the work is, then clean up.** Builds run locally in the worktree on the VM; that's
+   correct. But artifacts (compiled binaries, caches) must be gitignored / removed before commit — a
+   leftover `overlap-calculator` binary must never reach a PR.
+
+### RESULT guarantee
+Because a missing `RESULT` is the failure mode here, defend it from both sides: the worker prompt makes
+emitting `RESULT` the final, unconditional step on every branch; and the dispatcher, on *no RESULT*,
+recovers gracefully — it checks the worktree (uncommitted changes? a pushed branch?) and, rather than a
+bare "no RESULT line," reports what state the work was left in and (Phase 1+) treats a run that did real
+work but didn't finish as an **auto-continue candidate**, not a dead end.
+
 ## Implementation phases
 
+0. **Guardrails (ship immediately, no new state).** Bake the five hard rules into `worker-prompt.md`:
+   never wait across turns, builds/tests are synchronous and inline, always emit `RESULT` as the final
+   step, push-before-you-wait, clean build artifacts. Plus the dispatcher's RESULT-guarantee recovery
+   (on no-RESULT, report the worktree state instead of a bare error). This alone removes the CLU-71
+   class of stall — the agent would have pushed + opened the PR with a "CI pending" note instead of
+   blocking. Independent of every phase below.
 1. **Chained continuation (highest value, smallest).** `paused: more_runtime` + journal + auto-continue
    loop + continuation budget + sidecar state. Rehydration via journal+diff (no resume yet). This alone
    makes large tasks chain to completion.
