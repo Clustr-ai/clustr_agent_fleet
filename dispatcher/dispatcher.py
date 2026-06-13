@@ -1,6 +1,6 @@
 """Agent-fleet dispatcher — the single long-running loop.
 
-Each tick: sweep stale In-Progress, resume awaiting-input issues, then claim new AI Ready issues.
+Each tick: sweep stale AI Processing, resume awaiting-input issues, then claim new AI Ready issues.
 Per issue a worker runs; on `paused` the dispatcher auto-continues (bounded by MAX_CONTINUATIONS),
 parks external/human waits in AI Awaiting Input, and handles `decomposed` epics. Continuation +
 awaiting state is persisted (state.py) so a restart recovers in-flight work. The issue status is the
@@ -28,8 +28,8 @@ TAG = "🤖 **AI AGENT** —"  # prefix so every post is unmistakably from the a
 
 def _claim_comment(run_id):
     return (f"{TAG} claimed by the agent fleet (run `{run_id}`). I'm an autonomous AI working this in an "
-            f"isolated worktree off latest `main`. I'll move it to **AI Review** on success, **AI "
-            f"Blocked** if stuck, or pause for your input if I need it.")
+            f"isolated worktree off latest `main`. I'll move it to **AI Review** on success, or "
+            f"**AI Awaiting Input** if I get stuck or need your input.")
 
 
 def _set_cont(issue, cont):
@@ -50,11 +50,11 @@ def _finish_success(issue, result):
 
 
 def _finish_blocked(issue, result):
-    linear_api.update_state(issue["id"], config.STATUS_AI_BLOCKED)
+    linear_api.update_state(issue["id"], config.STATUS_AI_AWAITING_INPUT)
     linear_api.comment(issue["id"],
                        f"{TAG} ⛔ **Blocked.** {result.get('blocked_reason', '')}\n\n{result.get('summary', '')}")
     notify.blocked(issue, result)
-    log(issue["identifier"], "→ AI Blocked:", result.get("blocked_reason", ""))
+    log(issue["identifier"], "→ AI Awaiting Input:", result.get("blocked_reason", ""))
 
 
 def _handle_decomposed(issue, result):
@@ -155,9 +155,9 @@ def _spawn(issue):
 
 
 def sweep():
-    """In-Progress + assigned-to-agent + idle past lease → AI Blocked (a human re-queues it)."""
+    """AI Processing + assigned-to-agent + idle past lease → AI Awaiting Input (a human re-queues it)."""
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=config.LEASE_MINUTES)
-    for iss in linear_api.list_by_status(config.STATUS_IN_PROGRESS):
+    for iss in linear_api.list_by_status(config.STATUS_AI_PROCESSING):
         if not iss.get("assignee") or iss["assignee"]["id"] != config.AGENT_USER_ID:
             continue
         with _lock:
@@ -168,8 +168,8 @@ def sweep():
         except Exception:
             continue
         if updated < cutoff:
-            log(iss["identifier"], "lease expired → AI Blocked")
-            linear_api.update_state(iss["id"], config.STATUS_AI_BLOCKED)
+            log(iss["identifier"], "lease expired → AI Awaiting Input")
+            linear_api.update_state(iss["id"], config.STATUS_AI_AWAITING_INPUT)
             linear_api.comment(iss["id"],
                                f"{TAG} ⛔ Lease expired (idle > {config.LEASE_MINUTES}m). Re-queue to **AI Ready** to retry.")
             _clear_cont(iss["id"])
@@ -198,7 +198,7 @@ def process_awaiting():
             _awaiting.pop(iid, None)
             state.del_awaiting(iid)
             iss = info["issue"]
-            linear_api.update_state(iss["id"], config.STATUS_IN_PROGRESS)
+            linear_api.update_state(iss["id"], config.STATUS_AI_PROCESSING)
             log(iss["identifier"], "resuming from awaiting:", info["reason"])
             _spawn(iss)
 
@@ -231,7 +231,7 @@ def recover():
     _awaiting.update(awaiting)
     if cont or awaiting:
         log("recovered state:", len(cont), "continuation(s),", len(awaiting), "awaiting")
-    # Re-spawn interrupted In-Progress continuations (their worker died on shutdown). Awaiting issues
+    # Re-spawn interrupted AI Processing continuations (their worker died on shutdown). Awaiting issues
     # resume on their own via process_awaiting().
     for iid, c in list(_cont.items()):
         if iid in _awaiting:
@@ -248,7 +248,7 @@ def recover():
 
 def main():
     config.require("LINEAR_API_KEY", "TEAM_KEY", "AGENT_USER_ID",
-                   "STATUS_AI_READY", "STATUS_IN_PROGRESS", "STATUS_AI_REVIEW", "STATUS_AI_BLOCKED")
+                   "STATUS_AI_READY", "STATUS_AI_PROCESSING", "STATUS_AI_REVIEW", "STATUS_AI_AWAITING_INPUT")
     log("dispatcher up — team", config.TEAM_KEY, "concurrency", config.CONCURRENCY,
         "poll", config.POLL_INTERVAL_SEC, "lease", config.LEASE_MINUTES, "m max-cont", config.MAX_CONTINUATIONS)
     recover()

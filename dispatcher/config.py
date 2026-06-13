@@ -23,12 +23,16 @@ LINEAR_API_URL = "https://api.linear.app/graphql"
 TEAM_KEY = os.environ.get("LINEAR_TEAM_KEY", "")  # e.g. "ENG" — your Linear team key
 AGENT_USER_ID = os.environ.get("AGENT_LINEAR_USER_ID", "")  # the agent's Linear identity (user id)
 
-# Workflow status ids — all deployment-specific, no default. Create "AI Ready" / "AI Blocked" in your
-# Linear team workflow, then supply each id. The dispatcher refuses to start if any are unset.
+# Workflow status ids — all deployment-specific, no default. Create dedicated AI states in your Linear
+# team workflow so AI work never mixes with human work, then supply each id. The dispatcher refuses to
+# start if any are unset. The agent's lifecycle:
+#   AI Ready → AI Processing → AI Review (success) | AI Awaiting Input (blocked OR needs input)
+# AI Processing replaces the built-in "In Progress" (keep that for humans); AI Awaiting Input is the
+# single "agent stopped — a human's turn" state (blocked, a question, or an external wait all land here).
 STATUS_AI_READY = os.environ.get("STATUS_AI_READY", "")
-STATUS_IN_PROGRESS = os.environ.get("STATUS_IN_PROGRESS", "")
+STATUS_AI_PROCESSING = os.environ.get("STATUS_AI_PROCESSING", "")   # AI work only (NOT human In Progress)
 STATUS_AI_REVIEW = os.environ.get("STATUS_AI_REVIEW", "")
-STATUS_AI_BLOCKED = os.environ.get("STATUS_AI_BLOCKED", "")
+STATUS_AI_AWAITING_INPUT = os.environ.get("STATUS_AI_AWAITING_INPUT", "")  # blocked + needs-input merged
 
 # Loop / concurrency
 POLL_INTERVAL_SEC = int(os.environ.get("AGENT_POLL_INTERVAL_SEC", "60"))
@@ -39,9 +43,6 @@ LEASE_MINUTES = int(os.environ.get("AGENT_LEASE_MINUTES", "30"))  # In Progress 
 MAX_CONTINUATIONS = int(os.environ.get("AGENT_MAX_CONTINUATIONS", "6"))  # bound the auto-continue loop
 USE_RESUME = os.environ.get("AGENT_USE_RESUME", "0") == "1"  # claude --resume fast path (else rehydrate)
 EXTERNAL_RECHECK_SEC = int(os.environ.get("AGENT_EXTERNAL_RECHECK_SEC", "300"))  # waiting_external poll
-# Status for paused-on-external / needs-human waits (the sweeper ignores it). If you haven't created a
-# dedicated "AI Awaiting Input" workflow state, it falls back to AI Blocked (set after STATUS_AI_BLOCKED).
-STATUS_AI_AWAITING_INPUT = os.environ.get("STATUS_AI_AWAITING_INPUT", "")
 
 # Worker run (paths are in RUN_USER's home — its own agent-fleet checkout)
 FLEET_REPO = os.environ.get("AGENT_FLEET_REPO", os.path.join(RUN_HOME, "agent_fleet"))
@@ -58,10 +59,6 @@ KEEP_WORKTREES = os.environ.get("AGENT_KEEP_WORKTREES", "1") == "1"
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 NOTIFY_EMAIL = os.environ.get("AGENT_NOTIFY_EMAIL", "")  # who gets terminal-state emails
 NOTIFY_FROM = os.environ.get("AGENT_NOTIFY_FROM", "Agent <agent@example.com>")  # verified Resend domain
-
-
-# Awaiting-input falls back to AI Blocked if no dedicated status was provided.
-STATUS_AI_AWAITING_INPUT = STATUS_AI_AWAITING_INPUT or STATUS_AI_BLOCKED
 
 
 def require(*names):

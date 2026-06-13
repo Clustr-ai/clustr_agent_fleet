@@ -1,7 +1,7 @@
 """Terminal-state notification emails via Resend (stdlib only).
 
 Notification-only — there is nothing to approve (DESIGN.md §3). Sent when a run lands in
-AI Review (review ready) or AI Blocked (needs a human). Never raises into the dispatcher loop.
+AI Review (review ready) or AI Awaiting Input (needs a human). Never raises into the dispatcher loop.
 """
 import json
 import urllib.request
@@ -58,6 +58,6 @@ def blocked(issue, result):
         <p><b>Blocked reason:</b> {result.get('blocked_reason', '(none given)')}</p>
         <p><b>What it tried:</b> {result.get('summary', '')}</p>
         <p><a href="{_issue_url(ident)}">Open {ident} in Linear →</a></p>
-        <p>Status moved to <b>AI Blocked</b>.</p>
+        <p>Status moved to <b>AI Awaiting Input</b>.</p>
         """,
     )

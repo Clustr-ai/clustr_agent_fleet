@@ -1,7 +1,7 @@
 """Minimal Linear GraphQL client (stdlib only).
 
-Used by the dispatcher to drive the issue queue: list `AI Ready`, claim (→ In Progress + assign),
-comment, transition to AI Review / AI Blocked, and find stale In-Progress issues for the sweeper.
+Used by the dispatcher to drive the issue queue: list `AI Ready`, claim (→ AI Processing + assign),
+comment, transition to AI Review / AI Awaiting Input, and find stale AI Processing issues for the sweeper.
 The issue status IS the durable queue (DESIGN.md §4) — this client just moves rows.
 """
 import json
@@ -86,5 +86,5 @@ def try_claim(issue_id):
         return None
     if iss.get("assignee"):
         return None
-    update_state(issue_id, config.STATUS_IN_PROGRESS, config.AGENT_USER_ID)
+    update_state(issue_id, config.STATUS_AI_PROCESSING, config.AGENT_USER_ID)
     return iss
