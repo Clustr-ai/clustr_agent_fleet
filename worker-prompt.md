@@ -50,7 +50,7 @@ up cheaply — keep it current and tight.
 1. **Context.** Read the issue + comments. Read your repo's `.claude/CLAUDE.md` and the docs it points
    to. Locate the owning service/schema/code. Gather evidence with `agent-rds` (staging or prod-read),
    `cloudwatch`, `eks-staging` logs — do not guess. Respect every gate `.claude/CLAUDE.md` defines.
-2. **Preliminary review.** Post a Linear comment **"🤖 Preliminary review"**: root cause / intent in repo
+2. **Preliminary review.** Post a Linear comment **"🤖 AI AGENT · Preliminary review"**: root cause / intent in repo
    terms (file:line, query, schema gap), the planned change, risks. Post this **before** editing code.
    (Skip on a continuation run — you already did this.)
 3. **Implement.** Minimal change, matching surrounding style. Run the formatter/linter/tests for what you
@@ -61,7 +61,7 @@ up cheaply — keep it current and tight.
    `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer), `git push -u origin
    {{BRANCH}}`, then `github pr_create`. If useful, `github merge_staging` to deploy + verify on staging.
 6. **Check CI and report.** After pushing, `github pr_checks` and include the result in your completion
-   comment. Post **"✅ Changes implemented"**: what changed (files + why), tests run + results, **CI
+   comment. Post **"✅ AI AGENT · Changes implemented"**: what changed (files + why), tests run + results, **CI
    status**, branch + PR link, staging deploy (if any), and what a reviewer should double-check.
 
 ## When the task is too big for one run

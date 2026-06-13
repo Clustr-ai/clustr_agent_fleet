@@ -23,10 +23,13 @@ _awaiting = {}   # issue_id -> {"reason","branch","issue","recheck_at"(epoch|Non
 _lock = threading.Lock()
 
 
+TAG = "🤖 **AI AGENT** —"  # prefix so every post is unmistakably from the autonomous AI, not a person
+
+
 def _claim_comment(run_id):
-    return (f"🤖 Claimed by the agent fleet — run `{run_id}`. Working in an isolated worktree off latest "
-            f"`main`. I'll move this to **AI Review** on success, **AI Blocked** if stuck, or pause for "
-            f"input if I need it.")
+    return (f"{TAG} claimed by the agent fleet (run `{run_id}`). I'm an autonomous AI working this in an "
+            f"isolated worktree off latest `main`. I'll move it to **AI Review** on success, **AI "
+            f"Blocked** if stuck, or pause for your input if I need it.")
 
 
 def _set_cont(issue, cont):
@@ -49,7 +52,7 @@ def _finish_success(issue, result):
 def _finish_blocked(issue, result):
     linear_api.update_state(issue["id"], config.STATUS_AI_BLOCKED)
     linear_api.comment(issue["id"],
-                       f"⛔ **Blocked.** {result.get('blocked_reason', '')}\n\n{result.get('summary', '')}")
+                       f"{TAG} ⛔ **Blocked.** {result.get('blocked_reason', '')}\n\n{result.get('summary', '')}")
     notify.blocked(issue, result)
     log(issue["identifier"], "→ AI Blocked:", result.get("blocked_reason", ""))
 
@@ -57,7 +60,7 @@ def _finish_blocked(issue, result):
 def _handle_decomposed(issue, result):
     subs = result.get("subtasks") or []
     linear_api.comment(issue["id"],
-                       "🧩 **Decomposed into sub-tickets.** The foundational piece is in the PR; the rest "
+                       "🧩 **AI AGENT decomposed this into sub-tickets.** The foundational piece is in the PR; the rest "
                        "are tracked as: " + (", ".join(subs) if subs else "(see comments)") +
                        f"\n\n{result.get('summary', '')}")
     linear_api.update_state(issue["id"], config.STATUS_AI_REVIEW)
@@ -72,7 +75,7 @@ def _park_awaiting(issue, branch, result):
     recheck = None
     if reason == "needs_human":
         q = result.get("question") or "I need a decision to proceed."
-        linear_api.comment(issue["id"], f"⏸️ **Awaiting your input.** {q}\n\n_Reply here and I'll continue._")
+        linear_api.comment(issue["id"], f"{TAG} ⏸️ **Awaiting your input.** {q}\n\n_Reply here and I'll continue._")
         try:
             comment_count = len(linear_api.comments(issue["id"]))
         except Exception:
@@ -80,7 +83,7 @@ def _park_awaiting(issue, branch, result):
     else:  # waiting_external
         recheck = time.time() + config.EXTERNAL_RECHECK_SEC
         linear_api.comment(issue["id"],
-                           f"⏸️ Waiting on `{result.get('wait_for', 'external')}` — I'll re-check shortly.")
+                           f"{TAG} ⏸️ Waiting on `{result.get('wait_for', 'external')}` — I'll re-check shortly.")
     rec = {"reason": reason, "branch": branch, "issue": issue,
            "recheck_at": recheck, "comment_count": comment_count}
     _awaiting[issue["id"]] = rec
@@ -168,7 +171,7 @@ def sweep():
             log(iss["identifier"], "lease expired → AI Blocked")
             linear_api.update_state(iss["id"], config.STATUS_AI_BLOCKED)
             linear_api.comment(iss["id"],
-                               f"⛔ Lease expired (idle > {config.LEASE_MINUTES}m). Re-queue to **AI Ready** to retry.")
+                               f"{TAG} ⛔ Lease expired (idle > {config.LEASE_MINUTES}m). Re-queue to **AI Ready** to retry.")
             _clear_cont(iss["id"])
 
 
