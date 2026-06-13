@@ -65,15 +65,17 @@ def comments(issue_id):
     return [{"body": n["body"], "user_id": (n.get("user") or {}).get("id")} for n in nodes]
 
 
-def human_reply_since(issue_id, agent_user_id, since_count):
-    """If a non-agent comment was added beyond `since_count`, return its body (the human's answer)."""
+def new_reply_since(issue_id, since_count):
+    """Return the newest comment body if any was added beyond `since_count`, else None.
+
+    Used to resume a `needs_human` pause: while the issue is parked in AI Awaiting Input the worker has
+    exited, so *any* new comment is an external (human) reply — no author comparison needed, which means
+    this works even when the agent shares the human's Linear identity (V1). Prefer a non-agent author
+    when one is distinguishable, but fall back to the newest comment."""
     cs = comments(issue_id)
     if len(cs) <= since_count:
         return None
-    for c in cs[since_count:]:
-        if c["user_id"] and c["user_id"] != agent_user_id:
-            return c["body"]
-    return None
+    return cs[-1]["body"]
 
 
 def try_claim(issue_id):

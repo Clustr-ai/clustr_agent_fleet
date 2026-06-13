@@ -183,7 +183,7 @@ def process_awaiting():
             ready = bool(info.get("recheck_at")) and time.time() >= info["recheck_at"]
         elif info["reason"] == "needs_human":
             try:
-                reply = linear_api.human_reply_since(iid, config.AGENT_USER_ID, info.get("comment_count", 0))
+                reply = linear_api.new_reply_since(iid, info.get("comment_count", 0))
             except Exception:
                 reply = None
             if reply:
