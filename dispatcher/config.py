@@ -52,7 +52,10 @@ MCP_CONFIG = os.environ.get("AGENT_MCP_CONFIG", os.path.join(FLEET_REPO, "agent.
 # worker-prompt is read by the dispatcher from ITS OWN fleet checkout to build the prompt:
 WORKER_PROMPT = os.environ.get("AGENT_WORKER_PROMPT",
                                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "worker-prompt.md"))
-WORKER_TIMEOUT_SEC = int(os.environ.get("AGENT_WORKER_TIMEOUT_SEC", "3600"))
+WORKER_TIMEOUT_SEC = int(os.environ.get("AGENT_WORKER_TIMEOUT_SEC", "3600"))  # hard wall-clock cap
+# Inactivity watchdog: kill a worker that produces NO Claude activity for this long (a hang), instead
+# of waiting out the full WORKER_TIMEOUT. Healthy long runs keep updating ~/.claude, so they're safe.
+INACTIVITY_SEC = int(os.environ.get("AGENT_INACTIVITY_SEC", "600"))
 KEEP_WORKTREES = os.environ.get("AGENT_KEEP_WORKTREES", "1") == "1"
 
 # Notifications (Resend)

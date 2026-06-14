@@ -145,7 +145,20 @@ python3 {shlex.quote(render)} {shlex.quote(config.MCP_CONFIG)} > "$__MCP"
   --mcp-config "$__MCP" \
   --strict-mcp-config \
   --permission-mode bypassPermissions \
-  {outfmt}--add-dir {shlex.quote(wt)}
+  {outfmt}--add-dir {shlex.quote(wt)} &
+__CPID=$!
+# Inactivity watchdog: if Claude writes nothing under ~/.claude for INACTIVITY_SEC, it's hung — kill it
+# so the dispatcher recovers now instead of waiting out the full timeout. Healthy runs keep ~/.claude hot.
+( while kill -0 $__CPID 2>/dev/null; do
+    sleep 60
+    if [ -z "$(find $HOME/.claude -type f -newermt @$(( $(date +%s) - {config.INACTIVITY_SEC} )) 2>/dev/null | head -1)" ]; then
+      echo "WATCHDOG: no Claude activity for {config.INACTIVITY_SEC}s; killing hung run" >&2
+      kill $__CPID 2>/dev/null; sleep 5; kill -9 $__CPID 2>/dev/null; break
+    fi
+  done ) &
+__WPID=$!
+wait $__CPID
+kill $__WPID 2>/dev/null
 rm -f "$__MCP"
 """
     try:
