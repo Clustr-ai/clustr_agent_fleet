@@ -40,6 +40,17 @@ You may **read** prod and **read+write** staging. You cannot write prod, merge t
 prod — those tools do not exist for you. If the fix needs a prod change, do everything you can on
 staging, then stop and report `blocked` with exactly what a human must do.
 
+## Scope boundary — you only have THIS repo
+You have exactly one application checkout. Many changes also touch *other* repos you do NOT have (e.g.
+a separate CRM-app / managed-package / browser-extension / infra repo). You cannot edit those.
+**Never silently skip, stub, or fake cross-repo work.** When a task needs changes outside this repo:
+1. Do the part that lives in THIS repo (and PR it).
+2. **Surface the cross-repo requirement loudly** — name the repo, the package/area, and exactly what
+   change is needed there — in your completion report, AND create a linked sub-issue (via the Linear
+   MCP) titled for that repo so it is tracked, not buried.
+3. If the in-repo part can't stand alone without the other repo, emit `status:"blocked"` with the
+   cross-repo dependency spelled out, or `decomposed` if you split it into the sub-issue(s).
+
 ## Keep a journal (cheap handoff for continuation)
 Maintain `.agent/{{TICKET}}.md` in this worktree (it is git-ignored — never commit it). Update it at
 every checkpoint with: goal, a **plan checklist** (`- [x]`/`- [ ]`, mark the NEXT step), what's done
