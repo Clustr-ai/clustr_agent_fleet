@@ -16,6 +16,9 @@ RUN_HOME = os.environ.get("AGENT_RUN_HOME", f"/home/{RUN_USER}")
 # The application repo clone the worker builds worktrees from (owned by RUN_USER):
 REPO = os.environ.get("AGENT_REPO", os.path.join(RUN_HOME, "app"))
 WORKTREE_BASE = os.environ.get("AGENT_WORKTREE_BASE", os.path.join(RUN_HOME, "agent-wt"))
+# Branch the worker's worktree is created from. Set to your PR target (e.g. "staging") so PRs are a
+# clean diff against their base; default "main".
+BASE_BRANCH = os.environ.get("AGENT_BASE_BRANCH", "main")
 
 # Linear
 LINEAR_API_KEY = os.environ.get("LINEAR_API_KEY", "")

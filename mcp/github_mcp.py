@@ -4,7 +4,7 @@
 Wraps the `gh` CLI authenticated as a dedicated agent GitHub App (token in this server's env, never
 in the agent context). Capabilities are deliberately narrow (see DESIGN.md, Layer 2):
 
-  - pr_create     open a PR (default base `main`) for the HUMAN review gate
+  - pr_create     open a PR (default base `staging`) for the HUMAN review gate
   - pr_checks     read CI / check-run status for a branch or PR
   - merge_staging merge a branch into the staging branch (triggers the staging deploy) — base is
                   HARD-PINNED to the staging branch; merging into `main`/prod is impossible here
@@ -29,6 +29,9 @@ import urllib.request
 
 REPO = os.environ.get("GH_REPO", "")  # e.g. "your-org/your-app"; falls back to cwd repo if empty
 STAGING_BRANCH = os.environ.get("GH_STAGING_BRANCH", "staging")
+# Base branch for review PRs. Defaults to the staging branch so the agent's PRs target staging (deploy
+# on merge), not main directly. Override with GH_PR_BASE for a different review target.
+PR_BASE = os.environ.get("GH_PR_BASE", STAGING_BRANCH)
 
 # GitHub App auth (the agent's distinct, non-allowlisted identity — see DESIGN.md, Layer 2).
 # Installation tokens are short-lived; we mint + cache them from the App private key. The App is NOT
@@ -80,7 +83,7 @@ TOOL = {
     "name": "github",
     "description": (
         "Scoped GitHub actions as the dedicated agent App. Actions: "
-        "pr_create (open a PR to base 'main' for human review — head, title, body); "
+        "pr_create (open a PR to base 'staging' for human review — head, title, body); "
         "pr_checks (CI status for a branch/PR — ref); "
         "merge_staging (merge a branch into the staging branch to deploy + test on staging — head). "
         "Merging into main/prod is NOT possible from this tool."
@@ -128,7 +131,7 @@ def run_action(args):
             return True, "pr_create requires head"
         title = args.get("title") or f"{head}"
         body = args.get("body") or ""
-        rc, out = gh("pr", "create", "--base", "main", "--head", head,
+        rc, out = gh("pr", "create", "--base", PR_BASE, "--head", head,
                      "--title", title, "--body", body)
         return rc != 0, out or "(pr created)"
 
