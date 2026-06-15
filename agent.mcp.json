@@ -40,8 +40,12 @@
       "env": {"AWS_PROFILE": "${AWS_PROFILE:-agent}", "AWS_REGION": "${AWS_REGION:-us-east-1}", "FASTMCP_LOG_LEVEL": "ERROR"}
     },
     "linear-server": {
-      "type": "http",
-      "url": "https://mcp.linear.app/mcp"
+      "command": "python3",
+      "args": ["${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/linear_mcp.py"],
+      "env": {
+        "LINEAR_API_KEY": "${LINEAR_API_KEY:-}",
+        "LINEAR_KEY_FILE": "${LINEAR_KEY_FILE:-}"
+      }
     }
   }
 }
