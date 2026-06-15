@@ -5,6 +5,7 @@ at deploy time via an EnvironmentFile (see `example.env`). The Linear status ids
 deployment-specific and have NO usable default — they must be supplied (the dispatcher fails fast at
 startup if any are missing). See DESIGN.md for the pattern and README.md for the operator guide.
 """
+import json
 import os
 
 # The worker runs as a dedicated low-privilege unix user (no SSH key, App-token git, assume-only AWS).
@@ -19,6 +20,49 @@ WORKTREE_BASE = os.environ.get("AGENT_WORKTREE_BASE", os.path.join(RUN_HOME, "ag
 # Branch the worker's worktree is created from. Set to your PR target (e.g. "staging") so PRs are a
 # clean diff against their base; default "main".
 BASE_BRANCH = os.environ.get("AGENT_BASE_BRANCH", "main")
+# Default PR base for the github tool (clustr_app PRs target staging). Per-repo entries can override.
+PR_BASE = os.environ.get("GH_PR_BASE", os.environ.get("GH_STAGING_BRANCH", BASE_BRANCH))
+
+# ── Multi-repo routing ───────────────────────────────────────────────────────
+# One dispatcher can drive several repos. A ticket picks its repo with a `repo:<name>` Linear label;
+# no such label → DEFAULT_REPO. Each entry says where the worker's clone is, which GitHub repo to PR
+# against, the branch worktrees fork from, and that repo's PR base. DB access stays global (every repo's
+# agent reads the same prod DB via the worker profile), so only code/VCS routing varies here.
+#
+# Supply the registry as JSON in AGENT_REPOS, e.g.:
+#   AGENT_REPOS='{"app":{"path":"/home/agent/app","gh_repo":"org/app","base_branch":"staging","pr_base":"staging"},
+#                 "ops":{"path":"/home/agent/ops","gh_repo":"org/ops","base_branch":"main","pr_base":"main"}}'
+#   AGENT_DEFAULT_REPO=app
+# If AGENT_REPOS is unset, a single-repo registry is built from the flat AGENT_REPO/BASE_BRANCH vars so
+# existing single-repo deploys keep working unchanged (no GH_REPO override → the worker profile wins).
+def _load_repos():
+    raw = os.environ.get("AGENT_REPOS", "").strip()
+    if raw:
+        repos = json.loads(raw)
+        for key, cfg in repos.items():
+            cfg.setdefault("path", os.path.join(RUN_HOME, key))
+            cfg.setdefault("base_branch", BASE_BRANCH)
+            cfg.setdefault("pr_base", cfg.get("base_branch", BASE_BRANCH))
+            cfg.setdefault("gh_repo", "")
+        return repos
+    # Legacy single-repo fallback. gh_repo left empty so runner does NOT override the worker profile.
+    key = os.environ.get("AGENT_DEFAULT_REPO", "default")
+    return {key: {"path": REPO, "gh_repo": "", "base_branch": BASE_BRANCH, "pr_base": PR_BASE}}
+
+
+REPOS = _load_repos()
+DEFAULT_REPO = os.environ.get("AGENT_DEFAULT_REPO") or next(iter(REPOS))
+
+
+def resolve_repo(labels):
+    """Map an issue's label names to (repo_key, repo_cfg). A `repo:<name>` label whose <name> is a known
+    registry key wins; otherwise fall back to DEFAULT_REPO. Case-insensitive on the `repo:` prefix."""
+    for lb in labels or []:
+        if lb.lower().startswith("repo:"):
+            key = lb.split(":", 1)[1].strip()
+            if key in REPOS:
+                return key, REPOS[key]
+    return DEFAULT_REPO, REPOS[DEFAULT_REPO]
 
 # Linear
 LINEAR_API_KEY = os.environ.get("LINEAR_API_KEY", "")

@@ -26,9 +26,10 @@ _lock = threading.Lock()
 TAG = "🤖 **AI AGENT** —"  # prefix so every post is unmistakably from the autonomous AI, not a person
 
 
-def _claim_comment(run_id):
-    return (f"{TAG} claimed by the agent fleet (run `{run_id}`). I'm an autonomous AI working this in an "
-            f"isolated worktree off latest `main`. I'll move it to **AI Review** on success, or "
+def _claim_comment(run_id, repo_key=None):
+    where = f" in `{repo_key}`" if repo_key else ""
+    return (f"{TAG} claimed by the agent fleet (run `{run_id}`). I'm an autonomous AI working this{where} in an "
+            f"isolated worktree off the latest base branch. I'll move it to **AI Review** on success, or "
             f"**AI Awaiting Input** if I get stuck or need your input.")
 
 
@@ -95,12 +96,14 @@ def work_issue(issue):
     ident = issue["identifier"]
     branch = issue.get("branchName") or runner._fallback_branch(issue)
     issue["branchName"] = branch
+    repo_key = issue.get("repo") or config.DEFAULT_REPO
+    repo = config.REPOS.get(repo_key, config.REPOS[config.DEFAULT_REPO])
     try:
         while True:
             cont = _cont.get(issue["id"], {"continuations": 0, "session_id": None})
             tag = f"(cont {cont['continuations']})" if cont["continuations"] else ""
-            log(ident, "→ running worker", tag, "branch", branch)
-            result = runner.run_worker(issue, branch, cont)
+            log(ident, "→ running worker", tag, "branch", branch, "repo", repo_key)
+            result = runner.run_worker(issue, branch, cont, repo)
             status = result.get("status", "blocked")
 
             if status == "success":
@@ -140,7 +143,7 @@ def work_issue(issue):
             _clear_cont(issue["id"])
             if not config.KEEP_WORKTREES:
                 try:
-                    runner.remove_worktree(branch)
+                    runner.remove_worktree(branch, repo)
                 except Exception:
                     pass
         with _lock:
@@ -218,9 +221,11 @@ def tick():
         claimed = linear_api.try_claim(iss["id"])
         if not claimed:
             continue
+        repo_key, _repo = config.resolve_repo(linear_api.label_names(claimed))
+        claimed["repo"] = repo_key  # persisted with the issue across continuations/recovery
         run_id = f"{iss['identifier']}-{int(time.time())}"
-        linear_api.comment(iss["id"], _claim_comment(run_id))
-        log(iss["identifier"], "claimed", run_id)
+        linear_api.comment(iss["id"], _claim_comment(run_id, repo_key))
+        log(iss["identifier"], "claimed", run_id, "→ repo", repo_key)
         _spawn(claimed)
 
 

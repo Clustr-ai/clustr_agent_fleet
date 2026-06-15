@@ -5,6 +5,7 @@ English (code, comments, commits, Linear posts) even if the issue is in another 
 ## Issue
 - **ID:** {{TICKET}}
 - **Title:** {{TITLE}}
+- **Repo:** {{REPO}} (your worktree is a checkout of THIS repo — the dispatcher routed the ticket here based on its `repo:` label)
 - **Branch (already checked out in this worktree):** {{BRANCH}}
 
 The full description and comments are on the issue — read them via the Linear MCP.

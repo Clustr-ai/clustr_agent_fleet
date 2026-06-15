@@ -43,14 +43,16 @@ def _fallback_branch(issue):
     return f"agent/{issue['identifier'].lower()}-{slug}"
 
 
-def build_prompt(issue, cont=None):
+def build_prompt(issue, cont=None, repo=None):
     tmpl = open(config.WORKER_PROMPT).read()
+    repo_name = (repo or {}).get("gh_repo") or (repo or {}).get("path") or "this repo"
+    base = (repo or {}).get("base_branch") or config.BASE_BRANCH
     contblock = ""
     if cont and cont.get("continuations", 0) > 0:
         contblock = (
             f"\n## ⏩ CONTINUATION (run #{cont['continuations'] + 1})\n"
             f"You are RESUMING this ticket — your prior work is already in this worktree. FIRST read "
-            f"`.agent/{issue['identifier']}.md` (your journal) and run `git diff origin/main` to see "
+            f"`.agent/{issue['identifier']}.md` (your journal) and run `git diff origin/{base}` to see "
             f"what's done, then continue from the NEXT unchecked step. Do NOT restart from scratch or "
             f"re-post the preliminary review."
         )
@@ -60,6 +62,7 @@ def build_prompt(issue, cont=None):
             .replace("{{TICKET}}", issue["identifier"])
             .replace("{{TITLE}}", issue.get("title", ""))
             .replace("{{BRANCH}}", issue.get("branchName") or _fallback_branch(issue))
+            .replace("{{REPO}}", repo_name)
             .replace("{{CONTINUATION}}", contblock))
 
 
@@ -102,12 +105,28 @@ def _worktree_state(wt, branch):
     return changed, pushed
 
 
-def run_worker(issue, branch, cont=None):
-    """Run (or continue) the worker for one issue. Returns the parsed RESULT dict."""
-    prompt = build_prompt(issue, cont)
+def run_worker(issue, branch, cont=None, repo=None):
+    """Run (or continue) the worker for one issue, in `repo` (a registry entry from config.REPOS).
+
+    Returns the parsed RESULT dict. The repo determines the clone the worktree forks from, the branch
+    it forks from, and (via injected env) which GitHub repo + PR base the github tool targets. DB tools
+    are unaffected — every repo's agent reads the same prod DB via the worker profile."""
+    repo = repo or config.REPOS[config.DEFAULT_REPO]
+    repo_path = repo.get("path") or config.REPO
+    base_branch = repo.get("base_branch") or config.BASE_BRANCH
+    prompt = build_prompt(issue, cont, repo)
     safe = branch.replace("/", "-")
     wt = os.path.join(config.WORKTREE_BASE, safe)
     render = os.path.join(config.FLEET_REPO, "bin", "render-mcp-config.py")
+
+    # Per-repo env, injected into the worker's login shell so render-mcp-config.py + the github tool
+    # target the right repo. Only override when the registry gives a value, so the single-repo fallback
+    # (empty gh_repo) leaves the worker profile's GH_REPO untouched — preserving existing behavior.
+    repo_env = ""
+    if repo.get("gh_repo"):
+        repo_env += f"export GH_REPO={shlex.quote(repo['gh_repo'])}\n"
+    if repo.get("pr_base"):
+        repo_env += f"export GH_PR_BASE={shlex.quote(repo['pr_base'])}\n"
 
     fd, promptfile = tempfile.mkstemp(prefix="agent-prompt-", suffix=".txt")
     with os.fdopen(fd, "w") as f:
@@ -123,15 +142,15 @@ def run_worker(issue, branch, cont=None):
 
     lockfile = os.path.join(config.RUN_HOME, ".agent-git.lock")
     script = f"""set -e
-mkdir -p {shlex.quote(config.WORKTREE_BASE)}
+{repo_env}mkdir -p {shlex.quote(config.WORKTREE_BASE)}
 (
   flock 9
-  cd {shlex.quote(config.REPO)}
-  git fetch -q origin {shlex.quote(config.BASE_BRANCH)}
+  cd {shlex.quote(repo_path)}
+  git fetch -q origin {shlex.quote(base_branch)}
   if git rev-parse --verify {shlex.quote(branch)} >/dev/null 2>&1; then
     git worktree add {shlex.quote(wt)} {shlex.quote(branch)} 2>/dev/null || true
   else
-    git worktree add -b {shlex.quote(branch)} {shlex.quote(wt)} origin/{shlex.quote(config.BASE_BRANCH)} 2>/dev/null || true
+    git worktree add -b {shlex.quote(branch)} {shlex.quote(wt)} origin/{shlex.quote(base_branch)} 2>/dev/null || true
   fi
 ) 9>{shlex.quote(lockfile)}
 cd {shlex.quote(wt)}
@@ -202,7 +221,9 @@ rm -f "$__MCP"
     return res
 
 
-def remove_worktree(branch):
+def remove_worktree(branch, repo=None):
+    repo = repo or config.REPOS[config.DEFAULT_REPO]
+    repo_path = repo.get("path") or config.REPO
     safe = branch.replace("/", "-")
     wt = os.path.join(config.WORKTREE_BASE, safe)
-    _as_run_user(f"cd {shlex.quote(config.REPO)} && git worktree remove --force {shlex.quote(wt)}", timeout=60)
+    _as_run_user(f"cd {shlex.quote(repo_path)} && git worktree remove --force {shlex.quote(wt)}", timeout=60)

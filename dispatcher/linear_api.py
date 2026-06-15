@@ -23,7 +23,13 @@ def _gql(query, variables=None):
     return data["data"]
 
 
-_ISSUE_FIELDS = "id identifier title branchName updatedAt state { id name } assignee { id }"
+_ISSUE_FIELDS = ("id identifier title branchName updatedAt state { id name } assignee { id } "
+                 "labels { nodes { name } }")
+
+
+def label_names(issue):
+    """Flat list of an issue's label names (used to route to the right repo)."""
+    return [n["name"] for n in ((issue or {}).get("labels") or {}).get("nodes", [])]
 
 
 def list_by_status(state_id):

@@ -29,6 +29,7 @@
       "env": {
         "GH_REPO": "${GH_REPO:-your-org/your-app}",
         "GH_STAGING_BRANCH": "${GH_STAGING_BRANCH:-staging}",
+        "GH_PR_BASE": "${GH_PR_BASE:-${GH_STAGING_BRANCH:-staging}}",
         "GH_APP_ID": "${GH_APP_ID:-}", "GH_APP_INSTALLATION_ID": "${GH_APP_INSTALLATION_ID:-}",
         "GH_APP_KEY_FILE": "${GH_APP_KEY_FILE:-/etc/agent/gh-app-key.pem}"
       }
