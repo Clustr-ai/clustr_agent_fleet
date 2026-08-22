@@ -206,12 +206,37 @@ def process_awaiting():
             _spawn(iss)
 
 
+_last_cap_log = 0.0
+
+
+def review_lane_full():
+    """True when AI Review is at or over its WIP cap — the fleet must stop claiming new work.
+
+    Producing PRs faster than they are reviewed does not ship anything; it grows a queue that rots
+    into merge conflicts. The cap makes review capacity, not agent capacity, set the pace. Logged at
+    most once every 10 minutes so a long hold does not drown the journal.
+    """
+    global _last_cap_log
+    if not config.REVIEW_WIP_CAP:
+        return False
+    n = len(linear_api.list_by_status(config.STATUS_AI_REVIEW))
+    if n < config.REVIEW_WIP_CAP:
+        return False
+    now = time.time()
+    if now - _last_cap_log > 600:
+        _last_cap_log = now
+        log(f"AI Review at {n} (cap {config.REVIEW_WIP_CAP}) — not claiming; drain the review lane")
+    return True
+
+
 def tick():
     sweep()
     process_awaiting()
     with _lock:
         if config.CONCURRENCY - len(_active) <= 0:
             return
+    if review_lane_full():
+        return
     for iss in linear_api.list_by_status(config.STATUS_AI_READY):
         with _lock:
             if len(_active) >= config.CONCURRENCY:
@@ -255,6 +280,7 @@ def main():
     config.require("LINEAR_API_KEY", "TEAM_KEY", "AGENT_USER_ID",
                    "STATUS_AI_READY", "STATUS_AI_PROCESSING", "STATUS_AI_REVIEW", "STATUS_AI_AWAITING_INPUT")
     log("dispatcher up — team", config.TEAM_KEY, "concurrency", config.CONCURRENCY,
+        "review-cap", config.REVIEW_WIP_CAP or "off",
         "poll", config.POLL_INTERVAL_SEC, "lease", config.LEASE_MINUTES, "m max-cont", config.MAX_CONTINUATIONS)
     recover()
     while True:

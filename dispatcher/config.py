@@ -86,6 +86,18 @@ POLL_INTERVAL_SEC = int(os.environ.get("AGENT_POLL_INTERVAL_SEC", "60"))
 CONCURRENCY = int(os.environ.get("AGENT_CONCURRENCY", "1"))  # start at 1; raise once trusted
 LEASE_MINUTES = int(os.environ.get("AGENT_LEASE_MINUTES", "30"))  # In Progress idle > this → swept
 
+# WIP cap on the review lane — the pipeline's throughput governor.
+#
+# Agents produce faster than review drains. Without a cap the fleet happily pushes 10 concurrent PRs
+# into a lane nobody is emptying: AI Ready starves to 0, AI Review climbs past 30, and PRs rot into
+# conflict against a moving `staging` (13 of them reached 48-61 days before this cap existed). Work
+# that cannot be reviewed is not throughput, it is inventory.
+#
+# So: stop claiming new AI Ready work while AI Review is at or over this many issues. Nothing is
+# cancelled and nothing is lost — the queue simply stops being fed until a human drains the back.
+# Raise it as review capacity grows; 0 disables the cap entirely.
+REVIEW_WIP_CAP = int(os.environ.get("AGENT_REVIEW_WIP_CAP", "8"))
+
 # Long-running tasks / continuation (docs/long-running-tasks.md)
 MAX_CONTINUATIONS = int(os.environ.get("AGENT_MAX_CONTINUATIONS", "6"))  # bound the auto-continue loop
 USE_RESUME = os.environ.get("AGENT_USE_RESUME", "0") == "1"  # claude --resume fast path (else rehydrate)
