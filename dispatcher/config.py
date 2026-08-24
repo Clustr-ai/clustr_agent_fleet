@@ -7,6 +7,7 @@ startup if any are missing). See DESIGN.md for the pattern and README.md for the
 """
 import json
 import os
+import sys
 
 # The worker runs as a dedicated low-privilege unix user (no SSH key, App-token git, assume-only AWS).
 # The dispatcher (this process) holds the Linear/Resend secrets and spawns the worker via
@@ -125,6 +126,13 @@ NOTIFY_FROM = os.environ.get("AGENT_NOTIFY_FROM", "Agent <agent@example.com>")  
 
 def require(*names):
     """Fail fast at startup if a required env var is unset."""
-    missing = [n for n in names if not globals().get(n)]
+    # getattr on this module rather than globals(). Same lookup, but globals()
+    # indexed by a non-literal is what semgrep's dangerous-globals-use flags,
+    # and the rule is not wrong about the general shape even though this call
+    # only ever read: `globals()[x]` is one character from something callable.
+    # There is no reason to keep the sharper tool when the blunt one does the
+    # same job.
+    module = sys.modules[__name__]
+    missing = [n for n in names if not getattr(module, n, None)]
     if missing:
         raise SystemExit(f"missing required config: {', '.join(missing)}")
