@@ -22,19 +22,50 @@ def _conn():
     return c
 
 
+# The only two tables these helpers may touch. A table name is an identifier,
+# so it cannot be a bound parameter -- sqlite has no `?` that can stand where
+# `FROM {table}` goes, and the f-strings below are therefore unavoidable. What
+# IS avoidable is trusting the argument: every caller today passes one of these
+# two literals, but that is a fact about the callers, not a property of the
+# helpers. Checking here means the f-strings can only ever interpolate a name
+# from this set.
+_TABLES = ("cont", "awaiting")
+
+
+def _table(name):
+    if name not in _TABLES:
+        raise ValueError(f"unknown state table {name!r}; expected one of {_TABLES}")
+    return name
+
+
 def _put(table, issue_id, data):
+    table = _table(table)
     with _lock, _conn() as c:
+        # table has already been through _table(), so the only names this f-string
+        # can interpolate are the two literals in _TABLES. issue_id and data are bound
+        # with ?.
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         c.execute(f"INSERT OR REPLACE INTO {table}(issue_id,data) VALUES(?,?)",
                   (issue_id, json.dumps(data, default=str)))
 
 
 def _del(table, issue_id):
+    table = _table(table)
     with _lock, _conn() as c:
+        # table has already been through _table(), so the only names this f-string
+        # can interpolate are the two literals in _TABLES. issue_id and data are bound
+        # with ?.
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         c.execute(f"DELETE FROM {table} WHERE issue_id=?", (issue_id,))
 
 
 def _all(table):
+    table = _table(table)
     with _lock, _conn() as c:
+        # table has already been through _table(), so the only names this f-string
+        # can interpolate are the two literals in _TABLES. issue_id and data are bound
+        # with ?.
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query,python.lang.security.audit.formatted-sql-query.formatted-sql-query
         return {r[0]: json.loads(r[1]) for r in c.execute(f"SELECT issue_id,data FROM {table}")}
 
 

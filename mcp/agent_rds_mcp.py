@@ -116,6 +116,11 @@ def run_query(args):
     # staging-* → staging SQL helper / ephemeral psql pod (read/write). Never pass --rw.
     cmd = ["bash", SCRIPT, target, sql]
     try:
+        # subprocess.run is called with an ARGUMENT LIST and no shell=True, so the
+        # arguments go straight to execve and there is no shell to inject into. What
+        # the rule objects to is passing the inherited environment, which is how the
+        # child is given its credentials.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     except subprocess.TimeoutExpired:
         return True, "query timed out after 180s (pod scheduling + psql)"

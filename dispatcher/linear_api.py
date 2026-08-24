@@ -16,6 +16,10 @@ def _gql(query, variables=None):
         config.LINEAR_API_URL, data=body, method="POST",
         headers={"Content-Type": "application/json", "Authorization": config.LINEAR_API_KEY},
     )
+    # The URL is a module constant from dispatcher.config, set from the
+    # environment at startup -- not built from request or user input, so there is
+    # nothing here that can be redirected at runtime.
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.loads(r.read().decode())
     if "errors" in data:
