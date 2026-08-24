@@ -1,0 +1,20 @@
+# Dependabot keeps this repo's pinned dependencies current.
+#
+# There is no Python manifest here on purpose: dispatcher/, mcp/ and tools/ are
+# stdlib-only, so pip has nothing to watch. What does drift is the pinned
+# third-party GitHub Actions in .github/workflows and the providers in
+# infra/*.tf, and both are exactly the kind of supply-chain surface that goes
+# stale silently. Add a `pip` entry here the day a requirements.txt appears.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: terraform
+    directory: "/infra"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

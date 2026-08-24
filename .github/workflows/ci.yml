@@ -1,0 +1,55 @@
+# Automated code checks for every change to this repo.
+#
+# The job is deliberately called `lint`: it is the required status check on
+# main's branch protection, and renaming it silently un-gates the branch.
+#
+# Scope is "does this actually run", not "does this match a style guide". The
+# dispatcher and the MCP servers are stdlib-only Python driven by systemd
+# timers, so the failure that costs real time is a syntax error or a typo'd
+# name reaching a box where nobody is watching stdout. That is precisely what
+# compileall plus ruff's E9/F63/F7/F82 catch, and they need no dependency
+# install to do it. Style rules are left off on purpose — a red build nobody
+# can act on is worse than no build.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Python syntax (compileall)
+        run: python -m compileall -q dispatcher mcp tools
+
+      # E9 syntax, F63 bad comparison, F7 misplaced statement, F82 undefined
+      # name. Errors only, no style: see the note at the top of this file.
+      - name: Python errors (ruff)
+        run: |
+          pip install --quiet ruff
+          ruff check --select E9,F63,F7,F82 .
+
+      - name: Shell syntax
+        run: |
+          shellcheck --severity=error mcp/eks_staging.sh bin/autodeploy.sh
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive infra
