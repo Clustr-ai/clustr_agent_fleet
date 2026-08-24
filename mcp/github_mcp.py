@@ -72,6 +72,10 @@ def _installation_token():
         method="POST",
         headers={"Authorization": f"Bearer {jwt}", "Accept": "application/vnd.github+json"},
     )
+    # The URL is a module constant from dispatcher.config, set from the
+    # environment at startup -- not built from request or user input, so there is
+    # nothing here that can be redirected at runtime.
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.loads(r.read().decode())
     _token_cache["token"] = data["token"]
@@ -116,6 +120,11 @@ def gh(*gh_args):
     except Exception as e:
         return 1, f"could not mint GitHub App token: {e}"
     try:
+        # subprocess.run is called with an ARGUMENT LIST and no shell=True, so the
+        # arguments go straight to execve and there is no shell to inject into. What
+        # the rule objects to is passing the inherited environment, which is how the
+        # child is given its credentials.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
     except subprocess.TimeoutExpired:
         return 1, "gh timed out after 120s"
