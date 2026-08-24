@@ -9,12 +9,34 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: "/"
+    # A new release is at its most dangerous the day it ships: a compromised or
+    # yanked version is usually caught within days, and Dependabot would
+    # otherwise open the PR within hours. The counterpart to pinning by SHA --
+    # pinning stops a tag moving under us, the cooldown stops us racing to
+    # adopt whatever moved.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
 
   - package-ecosystem: terraform
     directory: "/infra"
+    # A new release is at its most dangerous the day it ships: a compromised or
+    # yanked version is usually caught within days, and Dependabot would
+    # otherwise open the PR within hours. The counterpart to pinning by SHA --
+    # pinning stops a tag moving under us, the cooldown stops us racing to
+    # adopt whatever moved.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
