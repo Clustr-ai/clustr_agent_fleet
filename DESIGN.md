@@ -92,9 +92,9 @@ advisory; these are guarantees:
    (prod write, merge `main`, prod deploy) **do not exist** in the agent's environment.
 
 The key consequence: **there is no per-action approval to click.** The earlier "approval broker"
-design is unnecessary because there is no dangerous write left to gate — staging is disposable and
-freely writable, production is read-only, and anything beyond that line is a *human action*, not an
-approval. This is strictly safer than runtime approval (nothing to mis-click or socially engineer)
+design is unnecessary because there is no dangerous write left to gate — every runtime the agent
+can reach is read-only, and anything beyond that line is a *human action*, not an approval. This is
+strictly safer than runtime approval (nothing to mis-click or socially engineer)
 and far less to build.
 
 A change is a permission **bug** if it: adds a broad cloud credential to the agent environment, adds
@@ -121,8 +121,7 @@ integration is sandboxed, the agent may write the staging DB but must not trigge
 |---|---|
 | `dispatcher/` | The loop: poll, claim (CAS), lease-sweep, spawn worker, land status, email. Stdlib only. |
 | `worker-prompt.md` | The per-issue methodology, templated with the ticket/title/branch. |
-| `mcp/agent_rds_mcp.py` | DB tool — prod read-only, staging read/write. |
-| `mcp/eks_staging_mcp.py` + `eks_staging.sh` | Staging-only Kubernetes ops (namespace-locked). |
+| `../clustr_app/ops-mcp/server.mjs` | DB + ops tool — prod read-only here; the same server an operator workstation runs. Not in this repo: it is shared with clustr_app so the two runtimes cannot drift. |
 | `mcp/github_mcp.py` | Scoped git via the agent App (PR to main, merge staging only). |
 | `agent.mcp.json` | The worker's entire tool surface — only scoped servers, no raw CLI. |
 | `infra/iam-agent.tf` | The scoped cloud role — explicit prod-deny (Layer 1). |

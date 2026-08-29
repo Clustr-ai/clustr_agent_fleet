@@ -1,47 +1,54 @@
 {
-  "_comment": "MCP surface for headless worker runs — executed as the low-priv agent user. ONLY permission-scoped tools, no raw aws/kubectl/psql/gh. Values come from the environment with generic defaults (Claude Code expands ${VAR:-default}); supply your own via example.env at deploy time. Launched with: claude --mcp-config <this> --strict-mcp-config",
+  "_comment": "MCP surface for headless worker runs — executed as the low-priv agent user. ONLY permission-scoped tools, no raw aws/kubectl/psql/gh. The DB/ops plane is clustr_app/ops-mcp/server.mjs, shared verbatim with operator workstations: it derives its own tool list from what this host can reach, and CLUSTR_OPS_MODE=ro pins it read-only. Launched with: claude --mcp-config <this> --strict-mcp-config",
   "mcpServers": {
-    "agent-rds": {
-      "command": "python3",
-      "args": ["${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/agent_rds_mcp.py"],
+    "_comment_ops": "The SAME server an operator workstation runs (clustr_app/ops-mcp/server.mjs) — one tool surface, one code path, so the two runtimes cannot drift. It probes what THIS host can reach and registers only those tools: on a fleet box the mutating tools (retry_job, resend_webhook, crm_sync, abs_run) are never listed, and `query` has no write mode. CLUSTR_OPS_MODE=ro pins that regardless. None of it is the security boundary — see the header of server.mjs for the three mechanisms that are.",
+    "clustr-ops": {
+      "command": "node",
+      "args": [
+        "${APP_REPO:-/home/clustr-agent/clustr_app}/ops-mcp/server.mjs"
+      ],
       "env": {
-        "AWS_PROFILE": "${AWS_PROFILE:-agent}", "AWS_REGION": "${AWS_REGION:-us-east-1}",
-        "APP_REPO": "${APP_REPO:-/home/agent/app}",
-        "AGENT_DB_TARGETS": "${AGENT_DB_TARGETS:-app}",
-        "PROD_RDS_HOST_PATTERN": "${PROD_RDS_HOST_PATTERN:-{svc}.CHANGEME.us-east-1.rds.amazonaws.com}",
-        "PROD_RO_USER": "${PROD_RO_USER:-agent_ro}",
-        "PROD_RO_ENV_FILE": "${PROD_RO_ENV_FILE:-/etc/agent/prod-ro.env}"
-      }
-    },
-    "eks-staging": {
-      "command": "python3",
-      "args": ["${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/eks_staging_mcp.py"],
-      "env": {
-        "AWS_PROFILE": "${AWS_PROFILE:-agent}", "AWS_REGION": "${AWS_REGION:-us-east-1}",
-        "EKS_CLUSTER": "${EKS_CLUSTER:-my-cluster}",
-        "STAGING_NAMESPACE": "${STAGING_NAMESPACE:-staging}",
-        "STAGING_SERVICES": "${STAGING_SERVICES:-app}"
+        "APP_REPO": "${APP_REPO:-/home/clustr-agent/clustr_app}",
+        "AWS_PROFILE": "${AWS_PROFILE:-agent}",
+        "AWS_REGION": "${AWS_REGION:-eu-west-3}",
+        "CLUSTR_OPS_MODE": "ro",
+        "RDSQL_ENV_FILE": "${RDSQL_ENV_FILE:-/etc/agent/clustr-ops.env}",
+        "RDSQL_OPS_NAMESPACE": "${RDSQL_OPS_NAMESPACE:-agent-readonly}",
+        "RDSQL_OPS_SECRET": "${RDSQL_OPS_SECRET:-clustr-ops-db-ro}"
       }
     },
     "github": {
       "command": "python3",
-      "args": ["${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/github_mcp.py"],
+      "args": [
+        "${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/github_mcp.py"
+      ],
       "env": {
         "GH_REPO": "${GH_REPO:-your-org/your-app}",
         "GH_STAGING_BRANCH": "${GH_STAGING_BRANCH:-staging}",
         "GH_PR_BASE": "${GH_PR_BASE:-${GH_STAGING_BRANCH:-staging}}",
-        "GH_APP_ID": "${GH_APP_ID:-}", "GH_APP_INSTALLATION_ID": "${GH_APP_INSTALLATION_ID:-}",
+        "GH_APP_ID": "${GH_APP_ID:-}",
+        "GH_APP_INSTALLATION_ID": "${GH_APP_INSTALLATION_ID:-}",
         "GH_APP_KEY_FILE": "${GH_APP_KEY_FILE:-/etc/agent/gh-app-key.pem}"
       }
     },
     "cloudwatch": {
       "command": "uvx",
-      "args": ["--with", "botocore[crt]", "awslabs.cloudwatch-mcp-server@latest"],
-      "env": {"AWS_PROFILE": "${AWS_PROFILE:-agent}", "AWS_REGION": "${AWS_REGION:-us-east-1}", "FASTMCP_LOG_LEVEL": "ERROR"}
+      "args": [
+        "--with",
+        "botocore[crt]",
+        "awslabs.cloudwatch-mcp-server@latest"
+      ],
+      "env": {
+        "AWS_PROFILE": "${AWS_PROFILE:-agent}",
+        "AWS_REGION": "${AWS_REGION:-us-east-1}",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
     },
     "linear-server": {
       "command": "python3",
-      "args": ["${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/linear_mcp.py"],
+      "args": [
+        "${AGENT_FLEET_DIR:-/home/agent/agent_fleet}/mcp/linear_mcp.py"
+      ],
       "env": {
         "LINEAR_API_KEY": "${LINEAR_API_KEY:-}",
         "LINEAR_KEY_FILE": "${LINEAR_KEY_FILE:-}"
