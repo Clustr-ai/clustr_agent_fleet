@@ -44,7 +44,13 @@ jobs:
 
       - name: Shell syntax
         run: |
-          shellcheck --severity=error mcp/eks_staging.sh bin/autodeploy.sh
+          # Globbed, not enumerated. The list named mcp/eks_staging.sh, deleted
+          # with the staging environment it orchestrated — so lint failed on the
+          # ABSENCE of a correctly-removed file, which reads as a code defect
+          # rather than a stale reference in CI config, and blocked a branch on a
+          # required check. A glob cannot go stale that way, and it also covers
+          # shell scripts added later, which the enumerated list never did.
+          shellcheck --severity=error $(git ls-files '*.sh')
 
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
