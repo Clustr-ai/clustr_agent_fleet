@@ -1,11 +1,11 @@
 {
-  "_comment": "MCP surface for headless worker runs — executed as the low-priv agent user. ONLY permission-scoped tools, no raw aws/kubectl/psql/gh. The DB/ops plane is clustr_app/ops-mcp/server.mjs, shared verbatim with operator workstations: it derives its own tool list from what this host can reach, and CLUSTR_OPS_MODE=ro pins it read-only. Launched with: claude --mcp-config <this> --strict-mcp-config",
+  "_comment": "MCP surface for headless worker runs — executed as the low-priv agent user. ONLY permission-scoped tools, no raw aws/kubectl/psql/gh. The DB/ops plane is clustr_app/clustr-admin-mcp/server.mjs, shared verbatim with operator workstations: it derives its own tool list from what this host can reach, and CLUSTR_OPS_MODE=ro pins it read-only. Launched with: claude --mcp-config <this> --strict-mcp-config",
   "mcpServers": {
-    "_comment_ops": "The SAME server an operator workstation runs (clustr_app/ops-mcp/server.mjs) — one tool surface, one code path, so the two runtimes cannot drift. It probes what THIS host can reach and registers only those tools: on a fleet box the mutating tools (retry_job, resend_webhook, crm_sync, abs_run) are never listed, and `query` has no write mode. CLUSTR_OPS_MODE=ro pins that regardless. None of it is the security boundary — see the header of server.mjs for the three mechanisms that are.",
+    "_comment_ops": "The SAME server an operator workstation runs (clustr_app/clustr-admin-mcp/server.mjs) — one tool surface, one code path, so the two runtimes cannot drift. It probes what THIS host can reach and registers only those tools: on a fleet box the mutating tools (retry_job, resend_webhook, crm_sync, abs_run) are never listed, and `query` has no write mode. CLUSTR_OPS_MODE=ro pins that regardless. None of it is the security boundary — see the header of server.mjs for the three mechanisms that are.",
     "clustr-ops": {
       "command": "node",
       "args": [
-        "${APP_REPO:-/home/clustr-agent/clustr_app}/ops-mcp/server.mjs"
+        "${APP_REPO:-/home/clustr-agent/clustr_app}/clustr-admin-mcp/server.mjs"
       ],
       "env": {
         "APP_REPO": "${APP_REPO:-/home/clustr-agent/clustr_app}",

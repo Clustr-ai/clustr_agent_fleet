@@ -121,7 +121,7 @@ integration is sandboxed, the agent may write the staging DB but must not trigge
 |---|---|
 | `dispatcher/` | The loop: poll, claim (CAS), lease-sweep, spawn worker, land status, email. Stdlib only. |
 | `worker-prompt.md` | The per-issue methodology, templated with the ticket/title/branch. |
-| `../clustr_app/ops-mcp/server.mjs` | DB + ops tool — prod read-only here; the same server an operator workstation runs. Not in this repo: it is shared with clustr_app so the two runtimes cannot drift. |
+| `../clustr_app/clustr-admin-mcp/server.mjs` | DB + ops tool — prod read-only here; the same server an operator workstation runs. Not in this repo: it is shared with clustr_app so the two runtimes cannot drift. |
 | `mcp/github_mcp.py` | Scoped git via the agent App (PR to main, merge staging only). |
 | `agent.mcp.json` | The worker's entire tool surface — only scoped servers, no raw CLI. |
 | `infra/iam-agent.tf` | The scoped cloud role — explicit prod-deny (Layer 1). |

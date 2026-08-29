@@ -26,7 +26,7 @@ never changes. That's what makes it adaptable: you replace planes, not the engin
 |---|---|---|---|
 | Issue tracker (the queue) | **Linear** (GraphQL) | `dispatcher/linear_api.py` | reimplement 5 funcs |
 | Coding agent | **Claude Code** CLI, headless | `dispatcher/runner.py` + `worker-prompt.md` | usually keep |
-| Database + ops access | **Postgres** read-only + admin API | `clustr_app/ops-mcp/server.mjs` | one server, shared with operators |
+| Database + ops access | **Postgres** read-only + admin API | `clustr_app/clustr-admin-mcp/server.mjs` | one server, shared with operators |
 | Version control | **GitHub** via `gh` + a GitHub App | `mcp/github_mcp.py` | swap CLI + token mint |
 | Cloud perimeter | **AWS IAM** (scoped role, prod-deny) | `infra/iam-agent.tf` | re-express per cloud |
 | Observability | **AWS CloudWatch** (read-only MCP) | `agent.mcp.json` | swap the MCP entry |
@@ -55,8 +55,8 @@ Beyond python3 (dispatcher + the github/linear MCPs) and the `claude` CLI:
 
 | need | why | only for |
 |---|---|---|
-| **node** (18+) | `ops-mcp/server.mjs` is Node; every other MCP here is Python | always |
-| a **clustr_app checkout** at `$APP_REPO` | holds `ops-mcp/` and `scripts/rdsql.sh`. `bin/autodeploy.sh` keeps it current and warns loudly if it is missing or stale | always |
+| **node** (18+) | `clustr-admin-mcp/server.mjs` is Node; every other MCP here is Python | always |
+| a **clustr_app checkout** at `$APP_REPO` | holds `clustr-admin-mcp/` and `scripts/rdsql.sh`. `bin/autodeploy.sh` keeps it current and warns loudly if it is missing or stale | always |
 | `kubectl` + kubeconfig | the `pod` DB transport, used when 5432 is unreachable | fallback |
 | `psql` | the `direct` DB transport | fast path |
 | `/etc/agent/clustr-ops.env`, mode 0600 | the `direct` transport's credential. **Must contain `DSN_RO` only** — a `DSN_RW` here would hand production writes to every unattended run | fast path |
@@ -105,7 +105,7 @@ Sanity-check any MCP tool by hand:
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-  | node ${APP_REPO:-/home/clustr-agent/clustr_app}/ops-mcp/server.mjs
+  | node ${APP_REPO:-/home/clustr-agent/clustr_app}/clustr-admin-mcp/server.mjs
 ```
 
 ---

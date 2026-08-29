@@ -11,7 +11,7 @@
 #   AGENT_RUN_USER             worker user (default agent)
 #   AGENT_WORKER_FLEET_DIR     worker user's repo checkout (default /home/<run_user>/agent_fleet)
 #   AGENT_SERVICE              systemd service to restart (default agent-dispatcher)
-#   APP_REPO                   clustr_app checkout (holds ops-mcp/ + scripts/); pulled too
+#   APP_REPO                   clustr_app checkout (holds clustr-admin-mcp/ + scripts/); pulled too
 set -euo pipefail
 
 BRANCH="${AGENT_DEPLOY_BRANCH:-main}"
@@ -35,7 +35,7 @@ git pull -q --ff-only origin "$BRANCH"
 sudo -u "$RUN_USER" -H bash -lc "git -C '$WORKER_DIR' pull -q --ff-only origin '$BRANCH'"
 
 # The app checkout too. The MCP surface is no longer in THIS repo — agent.mcp.json
-# points at $APP_REPO/ops-mcp/server.mjs, deliberately, so the fleet and operator
+# points at $APP_REPO/clustr-admin-mcp/server.mjs, deliberately, so the fleet and operator
 # workstations run one server and cannot drift. That makes the app checkout part of
 # the deployed surface, and leaving it un-pulled would silently pin the fleet to
 # whatever revision someone last fetched by hand.
@@ -48,10 +48,10 @@ if [ -d "$APP_DIR/.git" ]; then
   if sudo -u "$RUN_USER" -H bash -lc "git -C '$APP_DIR' pull -q --ff-only" 2>/dev/null; then
     echo "$(date -Is) app checkout updated"
   else
-    echo "$(date -Is) WARNING: could not fast-forward $APP_DIR — fleet will run a STALE ops-mcp" >&2
+    echo "$(date -Is) WARNING: could not fast-forward $APP_DIR — fleet will run a STALE clustr-admin-mcp" >&2
   fi
 else
-  echo "$(date -Is) WARNING: no git checkout at $APP_DIR — ops-mcp tools will be UNAVAILABLE" >&2
+  echo "$(date -Is) WARNING: no git checkout at $APP_DIR — clustr-admin-mcp tools will be UNAVAILABLE" >&2
 fi
 
 sudo systemctl restart "$SERVICE"
