@@ -49,6 +49,29 @@ infrastructure is hardcoded.
 
 ---
 
+## Host prerequisites
+
+Beyond python3 (dispatcher + the github/linear MCPs) and the `claude` CLI:
+
+| need | why | only for |
+|---|---|---|
+| **node** (18+) | `ops-mcp/server.mjs` is Node; every other MCP here is Python | always |
+| a **clustr_app checkout** at `$APP_REPO` | holds `ops-mcp/` and `scripts/rdsql.sh`. `bin/autodeploy.sh` keeps it current and warns loudly if it is missing or stale | always |
+| `kubectl` + kubeconfig | the `pod` DB transport, used when 5432 is unreachable | fallback |
+| `psql` | the `direct` DB transport | fast path |
+| `/etc/agent/clustr-ops.env`, mode 0600 | the `direct` transport's credential. **Must contain `DSN_RO` only** — a `DSN_RW` here would hand production writes to every unattended run | fast path |
+
+The DB transport is chosen automatically by probing whether 5432 is reachable, so a host
+missing the `direct` prerequisites falls back to `pod` rather than failing. Check what a host
+resolved to with:
+
+```bash
+$APP_REPO/scripts/rdsql.sh --probe
+# {"transport":"pod","write":false,"namespace":"agent-readonly",...}
+```
+
+`write:false` is the expected and required answer on a fleet host.
+
 ## Quickstart (reference stack)
 
 **Prerequisites:** `python3`, the `claude` CLI, plus the reference-stack CLIs your tools call —
