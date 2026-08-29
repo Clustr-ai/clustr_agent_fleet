@@ -2,8 +2,9 @@
 
 A small harness that turns your **issue tracker into a work queue for autonomous coding agents**. A
 dispatcher polls for human-approved issues, and runs one sandboxed headless agent per issue in its own
-git worktree. Each agent can **read production** and **read+write staging**, but **cannot** write
-production, merge `main`, or deploy production — those capabilities don't exist in its environment.
+git worktree. Each agent can **read production**, but **cannot** write any runtime, merge `main`,
+or deploy — those capabilities don't exist in its environment. (There is no staging environment: it
+was decommissioned 2026-08-19, and `staging` is now a branch with nothing behind it.)
 
 ```
 tracker "AI Ready" ──▶ dispatcher claims ──▶ headless agent (own worktree) ──▶ "AI Review" / "AI Blocked"
@@ -25,8 +26,7 @@ never changes. That's what makes it adaptable: you replace planes, not the engin
 |---|---|---|---|
 | Issue tracker (the queue) | **Linear** (GraphQL) | `dispatcher/linear_api.py` | reimplement 5 funcs |
 | Coding agent | **Claude Code** CLI, headless | `dispatcher/runner.py` + `worker-prompt.md` | usually keep |
-| Database access | **Postgres** via `psql` | `mcp/agent_rds_mcp.py` | change the client cmd |
-| Staging orchestration | **Kubernetes / EKS** via `kubectl` | `mcp/eks_staging.sh` | edit 5 case branches |
+| Database + ops access | **Postgres** read-only + admin API | `clustr_app/clustr-admin-mcp/server.mjs` | one server, shared with operators |
 | Version control | **GitHub** via `gh` + a GitHub App | `mcp/github_mcp.py` | swap CLI + token mint |
 | Cloud perimeter | **AWS IAM** (scoped role, prod-deny) | `infra/iam-agent.tf` | re-express per cloud |
 | Observability | **AWS CloudWatch** (read-only MCP) | `agent.mcp.json` | swap the MCP entry |
@@ -48,6 +48,29 @@ infrastructure is hardcoded.
    (stuck — a human queue) → sends a notification. A lease sweeper recovers crashed runs.
 
 ---
+
+## Host prerequisites
+
+Beyond python3 (dispatcher + the github/linear MCPs) and the `claude` CLI:
+
+| need | why | only for |
+|---|---|---|
+| **node** (18+) | `clustr-admin-mcp/server.mjs` is Node; every other MCP here is Python | always |
+| a **clustr_app checkout** at `$APP_REPO` | holds `clustr-admin-mcp/` and `scripts/rdsql.sh`. `bin/autodeploy.sh` keeps it current and warns loudly if it is missing or stale | always |
+| `kubectl` + kubeconfig | the `pod` DB transport, used when 5432 is unreachable | fallback |
+| `psql` | the `direct` DB transport | fast path |
+| `/etc/agent/clustr-ops.env`, mode 0600 | the `direct` transport's credential. **Must contain `DSN_RO` only** — a `DSN_RW` here would hand production writes to every unattended run | fast path |
+
+The DB transport is chosen automatically by probing whether 5432 is reachable, so a host
+missing the `direct` prerequisites falls back to `pod` rather than failing. Check what a host
+resolved to with:
+
+```bash
+$APP_REPO/scripts/rdsql.sh --probe
+# {"transport":"pod","write":false,"namespace":"agent-readonly",...}
+```
+
+`write:false` is the expected and required answer on a fleet host.
 
 ## Quickstart (reference stack)
 
@@ -82,7 +105,7 @@ Sanity-check any MCP tool by hand:
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-  | python3 mcp/eks_staging_mcp.py
+  | node ${APP_REPO:-/home/clustr-agent/clustr_app}/clustr-admin-mcp/server.mjs
 ```
 
 ---
@@ -108,12 +131,13 @@ whatever your tracker uses to identify a workflow state. Keep `try_claim`'s comp
 - **Staging (read/write) path:** already a command you supply — set `APP_REPO` + `AGENT_RDS_HELPER`
   to your own SQL helper script. Targets come from `AGENT_DB_TARGETS`.
 
-### Staging orchestration — not Kubernetes? *(edit 5 case branches)*
-`mcp/eks_staging.sh` is a thin switch over five verbs: `status`, `wake`, `sleep`, `restart`, `logs`.
-Replace each branch's `kubectl` line with your orchestrator — `docker compose`, `nomad`, `systemctl`,
-ECS, etc. The Python MCP wrapper and the tool schema don't change. **Preserve the boundary:** pin
-operations to one fixed environment chosen at deploy time (`STAGING_NAMESPACE` here) — never let the
-target be caller-supplied per request.
+### Pre-prod orchestration — currently none
+The fleet used to ship an `eks-staging` MCP that could wake/sleep/restart a staging namespace. That
+environment was decommissioned 2026-08-19 and the tool was removed rather than left pointing at a
+deleted namespace. The agent now writes no runtime at all.
+
+If you add a pre-prod environment back, that is where a replacement plugs in — and re-read the
+outbound-sandboxing precondition in DESIGN.md before making it agent-writable.
 
 ### Version control — not GitHub? *(swap CLI + token mint)*
 `mcp/github_mcp.py` wraps `gh` authenticated as a GitHub App. For GitLab, swap `gh`→`glab` and the
