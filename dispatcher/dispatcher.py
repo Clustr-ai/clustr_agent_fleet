@@ -26,9 +26,10 @@ _lock = threading.Lock()
 TAG = "🤖 **AI AGENT** —"  # prefix so every post is unmistakably from the autonomous AI, not a person
 
 
-def _claim_comment(run_id, repo_key=None):
+def _claim_comment(run_id, repo_key=None, model=None):
     where = f" in `{repo_key}`" if repo_key else ""
-    return (f"{TAG} claimed by the agent fleet (run `{run_id}`). I'm an autonomous AI working this{where} in an "
+    on = f", model `{model}`" if model else ""
+    return (f"{TAG} claimed by the agent fleet (run `{run_id}`{on}). I'm an autonomous AI working this{where} in an "
             f"isolated worktree off the latest base branch. I'll move it to **AI Review** on success, or "
             f"**AI Awaiting Input** if I get stuck or need your input.")
 
@@ -98,12 +99,13 @@ def work_issue(issue):
     issue["branchName"] = branch
     repo_key = issue.get("repo") or config.DEFAULT_REPO
     repo = config.REPOS.get(repo_key, config.REPOS[config.DEFAULT_REPO])
+    model = issue.get("model") or config.CLAUDE_MODEL
     try:
         while True:
             cont = _cont.get(issue["id"], {"continuations": 0, "session_id": None})
             tag = f"(cont {cont['continuations']})" if cont["continuations"] else ""
-            log(ident, "→ running worker", tag, "branch", branch, "repo", repo_key)
-            result = runner.run_worker(issue, branch, cont, repo)
+            log(ident, "→ running worker", tag, "branch", branch, "repo", repo_key, "model", model)
+            result = runner.run_worker(issue, branch, cont, repo, model)
             status = result.get("status", "blocked")
 
             if status == "success":
@@ -246,11 +248,14 @@ def tick():
         claimed = linear_api.try_claim(iss["id"])
         if not claimed:
             continue
-        repo_key, _repo = config.resolve_repo(linear_api.label_names(claimed))
+        labels = linear_api.label_names(claimed)
+        repo_key, _repo = config.resolve_repo(labels)
         claimed["repo"] = repo_key  # persisted with the issue across continuations/recovery
+        model = config.resolve_model(labels)
+        claimed["model"] = model  # persisted with the issue across continuations/recovery
         run_id = f"{iss['identifier']}-{int(time.time())}"
-        linear_api.comment(iss["id"], _claim_comment(run_id, repo_key))
-        log(iss["identifier"], "claimed", run_id, "→ repo", repo_key)
+        linear_api.comment(iss["id"], _claim_comment(run_id, repo_key, model))
+        log(iss["identifier"], "claimed", run_id, "→ repo", repo_key, "model", model)
         _spawn(claimed)
 
 
