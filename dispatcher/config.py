@@ -107,7 +107,32 @@ EXTERNAL_RECHECK_SEC = int(os.environ.get("AGENT_EXTERNAL_RECHECK_SEC", "300")) 
 # Worker run (paths are in RUN_USER's home — its own agent-fleet checkout)
 FLEET_REPO = os.environ.get("AGENT_FLEET_REPO", os.path.join(RUN_HOME, "agent_fleet"))
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", os.path.join(RUN_HOME, ".npm-global/bin/claude"))
-CLAUDE_MODEL = os.environ.get("AGENT_MODEL", "claude-opus-4-8")
+# Default when a ticket carries no `model:` label — Sonnet, so Opus is opt-in per ticket rather than
+# the fleet-wide default. Override with AGENT_MODEL.
+CLAUDE_MODEL = os.environ.get("AGENT_MODEL", "claude-sonnet-5")
+
+# Same shape as resolve_repo above: a ticket picks its model with a `model:<name>` Linear label; no
+# such label (or a name not in MODEL_ALIASES) falls back to CLAUDE_MODEL. Kept as a name -> id alias
+# table, not a raw passthrough, so a typo'd label degrades to the default instead of handing an
+# unrecognized string straight to `claude --model`.
+MODEL_ALIASES = {
+    "opus": "claude-opus-5",
+    "sonnet": "claude-sonnet-5",
+    "haiku": "claude-haiku-4-5-20251001",
+}
+
+
+def resolve_model(labels):
+    """Map an issue's label names to a `--model` value. A `model:<name>` label whose <name> is a known
+    alias wins; otherwise CLAUDE_MODEL. Case-insensitive on the `model:` prefix."""
+    for lb in labels or []:
+        if lb.lower().startswith("model:"):
+            name = lb.split(":", 1)[1].strip().lower()
+            if name in MODEL_ALIASES:
+                return MODEL_ALIASES[name]
+    return CLAUDE_MODEL
+
+
 MCP_CONFIG = os.environ.get("AGENT_MCP_CONFIG", os.path.join(FLEET_REPO, "agent.mcp.json"))
 # worker-prompt is read by the dispatcher from ITS OWN fleet checkout to build the prompt:
 WORKER_PROMPT = os.environ.get("AGENT_WORKER_PROMPT",

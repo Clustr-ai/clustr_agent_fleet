@@ -105,13 +105,14 @@ def _worktree_state(wt, branch):
     return changed, pushed
 
 
-def run_worker(issue, branch, cont=None, repo=None):
+def run_worker(issue, branch, cont=None, repo=None, model=None):
     """Run (or continue) the worker for one issue, in `repo` (a registry entry from config.REPOS).
 
     Returns the parsed RESULT dict. The repo determines the clone the worktree forks from, the branch
     it forks from, and (via injected env) which GitHub repo + PR base the github tool targets. DB tools
     are unaffected — every repo's agent reads the same prod DB via the worker profile."""
     repo = repo or config.REPOS[config.DEFAULT_REPO]
+    model = model or config.CLAUDE_MODEL
     repo_path = repo.get("path") or config.REPO
     base_branch = repo.get("base_branch") or config.BASE_BRANCH
     prompt = build_prompt(issue, cont, repo)
@@ -160,7 +161,7 @@ mkdir -p .agent
 __MCP="$(mktemp)"
 python3 {shlex.quote(render)} {shlex.quote(config.MCP_CONFIG)} > "$__MCP"
 {shlex.quote(config.CLAUDE_BIN)} -p "$(cat {shlex.quote(promptfile)})" {resume}\
-  --model {shlex.quote(config.CLAUDE_MODEL)} \
+  --model {shlex.quote(model)} \
   --mcp-config "$__MCP" \
   --strict-mcp-config \
   --permission-mode bypassPermissions \
