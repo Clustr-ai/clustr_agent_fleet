@@ -20,6 +20,29 @@ RUN_USER="${AGENT_RUN_USER:-agent}"
 WORKER_DIR="${AGENT_WORKER_FLEET_DIR:-/home/$RUN_USER/agent_fleet}"
 SERVICE="${AGENT_SERVICE:-agent-dispatcher}"
 
+# The app checkout is part of the deployed surface: agent.mcp.json starts
+# $APP_REPO/clustr-admin-mcp/server.mjs, so a stale checkout pins the fleet to an old tool.
+# Refreshed on EVERY tick, not only when this repo moves (main moves many times a day here
+# and not at all there), and as the worker user, who owns it: ubuntu cannot even see
+# /home/<run_user>. No restart needed: each worker run starts the MCP server afresh.
+# Best-effort but loud: the symptom downstream is a missing or stale tool.
+APP_DIR="${APP_REPO:-/home/$RUN_USER/clustr_app}"
+if sudo -u "$RUN_USER" test -d "$APP_DIR/.git"; then
+  before=$(sudo -u "$RUN_USER" -H git -C "$APP_DIR" rev-parse --short HEAD)
+  if sudo -u "$RUN_USER" -H bash -lc "git -C '$APP_DIR' pull -q --ff-only" 2>/dev/null; then
+    after=$(sudo -u "$RUN_USER" -H git -C "$APP_DIR" rev-parse --short HEAD)
+    [ "$before" = "$after" ] || echo "$(date -Is) app checkout $before -> $after"
+  else
+    echo "$(date -Is) WARNING: could not fast-forward $APP_DIR, the fleet runs a STALE clustr-admin-mcp" >&2
+  fi
+else
+  echo "$(date -Is) WARNING: no git checkout at $APP_DIR, clustr-admin-mcp tools are UNAVAILABLE" >&2
+fi
+
+# The worker's copy of this repo (agent.mcp.json, prompts, render-mcp-config.py) is read
+# afresh by each run, so it also catches up every tick, whether or not the dispatcher moves.
+sudo -u "$RUN_USER" -H bash -lc "git -C '$WORKER_DIR' pull -q --ff-only origin '$BRANCH'" 2>/dev/null   || echo "$(date -Is) WARNING: could not fast-forward $WORKER_DIR, workers run a STALE fleet config" >&2
+
 cd "$DISPATCHER_DIR"
 git fetch -q origin "$BRANCH"
 [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BRANCH")" ] && exit 0   # up to date
@@ -32,27 +55,6 @@ fi
 
 echo "$(date -Is) deploying $(git rev-parse --short HEAD) -> $(git rev-parse --short "origin/$BRANCH")"
 git pull -q --ff-only origin "$BRANCH"
-sudo -u "$RUN_USER" -H bash -lc "git -C '$WORKER_DIR' pull -q --ff-only origin '$BRANCH'"
-
-# The app checkout too. The MCP surface is no longer in THIS repo — agent.mcp.json
-# points at $APP_REPO/clustr-admin-mcp/server.mjs, deliberately, so the fleet and operator
-# workstations run one server and cannot drift. That makes the app checkout part of
-# the deployed surface, and leaving it un-pulled would silently pin the fleet to
-# whatever revision someone last fetched by hand.
-#
-# Best-effort: a failure here must not abort a fleet deploy that is otherwise fine,
-# but it must be LOUD — the symptom downstream is a missing or stale MCP tool, which
-# nobody would trace back to this step.
-APP_DIR="${APP_REPO:-/home/$RUN_USER/clustr_app}"
-if [ -d "$APP_DIR/.git" ]; then
-  if sudo -u "$RUN_USER" -H bash -lc "git -C '$APP_DIR' pull -q --ff-only" 2>/dev/null; then
-    echo "$(date -Is) app checkout updated"
-  else
-    echo "$(date -Is) WARNING: could not fast-forward $APP_DIR — fleet will run a STALE clustr-admin-mcp" >&2
-  fi
-else
-  echo "$(date -Is) WARNING: no git checkout at $APP_DIR — clustr-admin-mcp tools will be UNAVAILABLE" >&2
-fi
 
 sudo systemctl restart "$SERVICE"
 echo "$(date -Is) deployed + restarted $SERVICE"
